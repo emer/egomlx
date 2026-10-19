@@ -9,9 +9,10 @@
 //
 // The network is built with the [gomlx] API and expressed through the
 // [egomlx] toolkit, which implements the emergent [emer] interfaces
-// for visualization in the [netview]. Backprop / weight updates are
-// currently stubbed -- the forward pass is real, so the activations
-// and their statistics are live.
+// for visualization in the [netview]. The forward pass, backpropagation
+// of error gradients, and optimizer weight updates are all real,
+// so the network genuinely learns, and the activations, error,
+// DWt and weight values shown in the netview are live.
 package ra25
 
 //go:generate core generate -add-types -add-funcs
@@ -150,7 +151,7 @@ func (ss *Sim) ConfigSim() {
 	ss.Root, _ = tensorfs.NewDir("Root")
 	tensorfs.CurRoot = ss.Root
 	ss.Net = egomlx.NewNetwork(ss.Config.Name)
-	ss.Params.Config(LayerParams, PathParams, ss.Config.Params.Sheet, ss.Config.Params.Tag, "github.com/emer/egomlx/sims/ra25", reflect.ValueOf(ss))
+	ss.Params.Config(NetworkParams, LayerParams, PathParams, ss.Config.Params.Sheet, ss.Config.Params.Tag, "github.com/emer/egomlx/sims/ra25", reflect.ValueOf(ss))
 	ss.RandSeeds.Init(100) // max 100 runs
 	ss.InitRandSeed(0)
 	// ss.ConfigInputs()
@@ -301,7 +302,8 @@ func (ss *Sim) ConfigLoops() {
 		}
 		curModeDir := ss.Current.Dir(Train.String())
 		// the NZero stat only exists once it has been computed;
-		// guard against it not being present yet (e.g., stubbed training).
+		// guard against it not being present yet (e.g., before the
+		// first epoch completes).
 		if curModeDir.Node("NZero") == nil {
 			return false
 		}
@@ -516,8 +518,8 @@ func (ss *Sim) StatsInit() {
 // ConfigStats configures the functions that do all the stats computation
 // in the tensorfs system, using the standard egomlx stats for counters,
 // names and timing, plus the output error statistics.
-// The output error is live -- the forward pass is real, so Err tracks
-// the network's current output error (flat while backprop is stubbed).
+// The output error is live -- Err tracks the network's current output
+// error, and falls as the network learns.
 func (ss *Sim) ConfigStats() {
 	ss.Stats = ss.Root.Dir("Stats")
 	ss.Current = ss.Stats.Dir("Current")
@@ -536,24 +538,18 @@ func (ss *Sim) ConfigStats() {
 // the per-item root-mean-square error between the Output layer
 // activations and targets at the Trial level, with hierarchical
 // reductions at higher levels, plus the standard zero-error epoch
-// tracking stats. This is live -- the forward pass is real, so Err
-// tracks the network's current output error (flat while backprop
-// and weight updates are stubbed).
+// tracking stats. This is live -- Err tracks the network's current
+// output error, and falls as the network learns.
 func (ss *Sim) StatErr(mode Modes, level Levels, start bool) {
 	statNames := []string{"Err", "NZero", "FirstZero", "LastZero"}
 	statDocs := map[string]string{
-		"Err":       "Root-mean-square error between the output activations and targets: per data item at the Trial level, mean over the epoch at the Epoch level, and final epoch value at higher levels. While backprop is stubbed, this is constant -- it will fall as the network learns once training is implemented.",
+		"Err":       "Root-mean-square error between the output activations and targets: per data item at the Trial level, mean over the epoch at the Epoch level, and final epoch value at higher levels. This falls as the network learns.",
 		"NZero":     "The number of near-zero-error epochs in a row (Err < 0.001), for stopping training. Only recorded at the Epoch level and above, in Train mode.",
 		"FirstZero": "The first epoch when the error was near zero.",
 		"LastZero":  "The epoch when training was stopped because NZero got above the threshold for number of near-perfect epochs in a row.",
 	}
 	for _, name := range statNames {
 		if name == "NZero" && (mode != Train || level == Trial) {
-			continue
-		}
-		// only Err is computed per data item at the Trial level;
-		// the other names only have values at Epoch level and above.
-		if level == Trial && name != "Err" {
 			continue
 		}
 		modeDir := ss.Stats.Dir(mode.String())
@@ -568,11 +564,6 @@ func (ss *Sim) StatErr(mode Modes, level Levels, start bool) {
 				s.Range.SetMin(0)
 				s.On = true
 				switch name {
-				case "Err":
-					s.On = false // turn off at levels where the scale is not comparable
-					if level == Trial {
-						s.On = true
-					}
 				case "NZero":
 					s.On = false
 				case "FirstZero", "LastZero":
@@ -596,29 +587,17 @@ func (ss *Sim) StatErr(mode Modes, level Levels, start bool) {
 		}
 		switch level {
 		case Trial:
-			ly := ss.Net.LayerByName("Output")
-			if ly == nil {
+			if name != "Err" {
+				tsr.AppendRowFloat(math.NaN())
 				continue
 			}
-			viA, _ := ly.UnitVarIndex("Act")
-			viT, _ := ly.UnitVarIndex("Targ")
-			nu := ly.Shape.Len()
 			for di := range ndata {
-				sum := float64(0)
-				for ui := range nu {
-					a := float64(ly.UnitValue1D(viA, ui, di))
-					t := float64(ly.UnitValue1D(viT, ui, di))
-					d := a - t
-					sum += d * d
-				}
-				rms := math.Sqrt(sum / float64(nu))
+				rms := egomlx.StatRMSE(ss.Net, "Output", di, ss.Config.Run.UnitErrThr)
 				curModeDir.Float64(name, ndata).SetFloat1D(rms, di)
 				tsr.AppendRowFloat(rms)
 			}
 		case Epoch:
 			switch name {
-			case "Err":
-				tsr.AppendRowFloat(stats.StatMean.Call(subDir.Value(name)).Float1D(0))
 			case "NZero":
 				errSum := stats.StatSum.Call(subDir.Value("Err")).Float1D(0)
 				nz := curModeDir.Float64(name, 1).Float1D(0)

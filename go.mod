@@ -1,6 +1,6 @@
 module github.com/emer/egomlx
 
-go 1.27
+go 1.27.0
 
 require (
 	cogentcore.org/core v0.3.45

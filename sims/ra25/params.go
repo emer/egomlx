@@ -8,6 +8,23 @@ import (
 	"github.com/emer/egomlx/egomlx"
 )
 
+// NetworkParams sets the minimal non-default global network params,
+// controlling the loss function and optimizer for the backward pass.
+// Base is always applied, and others can be optionally selected to apply on top of that.
+var NetworkParams = egomlx.NetworkSheets{
+	"Base": {
+		{Sel: "Network", Doc: "standard backprop defaults: SSE loss, SGD optimizer",
+			Set: func(np *egomlx.NetworkParams) {
+				np.Loss = egomlx.SSE
+				np.Optim = egomlx.SGD
+				np.LRate = 0.5
+				// clip update steps for stability of SGD with
+				// saturating sigmoid outputs:
+				np.ClipStepByValue = 0.1
+			}},
+	},
+}
+
 // LayerParams sets the minimal non-default params.
 // Base is always applied, and others can be optionally selected to apply on top of that.
 var LayerParams = egomlx.LayerSheets{
@@ -31,12 +48,14 @@ var LayerParams = egomlx.LayerSheets{
 // Base is always applied, and others can be optionally selected to apply on top of that.
 var PathParams = egomlx.PathSheets{
 	"Base": {
-		{Sel: "Path", Doc: "all forward paths: bias on, He weight init, standard backprop rate",
+		{Sel: "Path", Doc: "all forward paths: bias on, Glorot weight init, learning on",
 			Set: func(pt *egomlx.PathParams) {
 				pt.UseBias = true
-				pt.WtInit.Init = egomlx.He
+				// Glorot init keeps the sigmoid Output layer out of
+				// saturation, enabling SGD to learn the mapping:
+				pt.WtInit.Init = egomlx.Glorot
 				pt.WtInit.Scale = 1
-				pt.LRate = 0.1
+				pt.Learn = true
 			}},
 	},
 }

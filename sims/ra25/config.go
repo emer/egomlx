@@ -82,6 +82,9 @@ type RunConfig struct {
 	// NZero is how many perfect, zero-error epochs before stopping a Run.
 	NZero int `default:"2"`
 
+	// UnitErrThr is threshold on unit-level error -- below this, it goes to 0
+	UnitErrThr float64 `default:"0.5"`
+
 	// TestInterval is how often (in epochs) to run through all the test patterns,
 	// in terms of training epochs. Can use 0 or -1 for no testing.
 	TestInterval int `default:"5"`
@@ -122,5 +125,5 @@ func (cfg *Config) Defaults() {
 	cfg.Name = "RA25"
 	cfg.Title = "EgoMLX random associator"
 	cfg.URL = "https://github.com/emer/egomlx/blob/main/sims/ra25/README.md"
-	cfg.Doc = "This demonstrates a basic EgoMLX model and provides a template for creating new models. It has a random-associator four-layer feedforward network -- built with the gomlx API -- that uses the standard supervised backprop learning paradigm to learn mappings between 25 random input / output patterns defined over 5x5 input / output layers."
+	cfg.Doc = "This demonstrates a basic GoMLX feedforward model and provides a template for creating new models. It has a random-associator four-layer feedforward network -- built with the gomlx API -- that uses the standard supervised backprop learning paradigm to learn mappings between 25 random input / output patterns defined over 5x5 input / output layers."
 }

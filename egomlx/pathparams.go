@@ -90,9 +90,13 @@ type PathParams struct {
 	// WtInit has the parameters for weight initialization.
 	WtInit WtInitParams `display:"inline"`
 
-	// LRate is the learning rate for weight updates,
-	// for when backpropagation training is implemented.
-	LRate float64 `default:"0.1"`
+	// Learn indicates whether the weights of this pathway are trainable
+	// (learnable) during the Backward pass. If false, the weights stay
+	// fixed, acting as a constant transformation.
+	// The global [NetworkParams.LRate] learning rate applies to all
+	// pathways that are learning: [gomlx] optimizers do not support
+	// per-pathway rates.
+	Learn bool `default:"true"`
 }
 
 // Defaults sets default values for the PathParams.
@@ -102,7 +106,7 @@ func (pp *PathParams) Defaults() {
 	pp.WtInit.Init = He
 	pp.WtInit.Mean = 0
 	pp.WtInit.Scale = 1
-	pp.LRate = 0.1
+	pp.Learn = true
 }
 
 // Update is called when a parameter is changed to update any

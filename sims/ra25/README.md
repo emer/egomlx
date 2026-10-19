@@ -10,7 +10,7 @@ It has a random-associator four-layer feedforward network -- built with the [gom
 
 with full (dense) connections between successive layers. The data-parallel dimension (`NData`) is the outer-most dimension of all network state, per trial.
 
-> **Note:** the forward pass is fully implemented and live -- activations and the output error statistic are real, computed by the gomlx backend. Backpropagation and weight updates are currently **stubbed**, so the network does not (yet) learn -- the error stays at its initial level. This example is primarily a template for constructing, visualizing, and running gomlx models in the emergent [netview](https://github.com/emer/emergent/wiki/NetView).
+> **Note:** both the forward pass and the backward learning pass are fully implemented and live -- activations, the output error statistic, backpropagated gradients (DWt), and optimizer weight updates are all real, computed by the gomlx backend, so the network genuinely learns. The loss function (SSE by default) and optimizer (SGD by default, with Adam / AdamW / Adamax / RMSProp available) are configured in the `NetworkParams` sheet in `params.go`, and DWt values can be viewed in the netview when inspecting synapses. This example is also a template for constructing, visualizing, and running gomlx models in the emergent [netview](https://github.com/emer/emergent/wiki/NetView).
 
 # Running the model
 

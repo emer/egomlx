@@ -10,7 +10,7 @@ A toolkit for building, visualizing, and controlling [gomlx](https://github.com/
 
 ## Status
 
-The **forward pass** is fully implemented and live: activations, the output error statistic, and netview visualization all work with real gomlx computation (using the default XLA CPU backend; use `SetBackend` to select another). **Backpropagation and weight updates are currently stubbed**, so the example models do not (yet) learn -- this repository is currently focused on the visualization and control infrastructure, with training support to come.
+The **forward pass** is fully implemented and live: activations, the output error statistic, and netview visualization all work with real gomlx computation (using the default XLA CPU backend; use `SetBackend` to select another). **The backward learning pass is also live**: `Network.Backward` builds one compiled graph with forward + loss + autodiff gradients + optimizer weight updates (via [gomlx optimizers](https://pkg.go.dev/github.com/gomlx/gomlx/ml/train/optimizer)), so the example models genuinely learn. The loss function and optimizer settings are global in `Network.NetworkParams`; pathway-specific learning is controlled by `PathParams.Learn`. DWt (gradient) values are available as a netview synapse variable, read back only when actually being viewed.
 
 ## Requirements
 

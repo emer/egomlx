@@ -100,6 +100,16 @@ type Path struct {
 	// BiasVals is the read-back of the [Bias] variable values,
 	// in [NRecv] order.
 	BiasVals []float32 `display:"-"`
+
+	// KernelDWt is the read-back of the weight-change (gradient)
+	// values for the [Kernel], computed during the [Network] Backward
+	// pass, in [NSend][NRecv] sender-based order.
+	// Only updated if DWt readback was requested: see [DWtTypes].
+	KernelDWt []float32 `display:"-"`
+
+	// BiasDWt is the read-back of the weight-change (gradient) values
+	// for the [Bias], in [NRecv] order.
+	BiasDWt []float32 `display:"-"`
 }
 
 // emer.Path interface methods
@@ -149,34 +159,62 @@ func (pt *Path) SynVarIndex(varNm string) (int, error) {
 // SynValue1D returns the value of the given variable index
 // on the given synapse index.
 // Returns NaN on invalid index.
-// The current toolkit only supports the Wt variable,
-// which reads from the [KernelVals] readback buffer.
+// The Wt variable reads from the [KernelVals] readback buffer,
+// and the DWt variable reads from the [KernelDWt] gradient buffer,
+// which only has values after a Backward pass with DWt readback.
 func (pt *Path) SynValue1D(varIndex int, synIndex int) float32 {
-	if synIndex < 0 || synIndex >= len(pt.KernelVals) {
-		return math32.NaN()
-	}
 	if varIndex < 0 || varIndex >= pt.SynVarNum() {
 		return math32.NaN()
 	}
-	return pt.KernelVals[synIndex]
+	vals := pt.kernelVarVals(varIndex)
+	if synIndex < 0 || synIndex >= len(vals) {
+		return math32.NaN()
+	}
+	return vals[synIndex]
+}
+
+// kernelVarVals returns the readback buffer for the given synapse
+// variable index: Wt -> KernelVals, DWt -> KernelDWt.
+// Returns nil for unsupported or unpopulated variables.
+func (pt *Path) kernelVarVals(varIndex int) []float32 {
+	if varIndex < 0 || varIndex >= SynapseVarN {
+		return nil
+	}
+	switch SynapseVars[varIndex] {
+	case "Wt":
+		return pt.KernelVals
+	case "DWt":
+		return pt.KernelDWt
+	}
+	return nil
 }
 
 // SynValues fills in the values of the given variable name for each synapse,
 // using the natural sender-based ordering of the synapses,
 // into the given float32 slice (only resized if not big enough).
 // Returns an error on invalid variable name.
+// Wt values come from [KernelVals], and DWt from [KernelDWt],
+// which is NaN-filled until a Backward pass with DWt readback occurs.
 func (pt *Path) SynValues(vals *[]float32, varNm string) error {
-	_, err := pt.SynVarIndex(varNm)
+	vi, err := pt.SynVarIndex(varNm)
 	if err != nil {
 		return errors.Log(err)
 	}
-	ns := len(pt.KernelVals)
+	ns := pt.NumSyns()
 	if *vals == nil || cap(*vals) < ns {
 		*vals = make([]float32, ns)
 	} else if len(*vals) < ns {
 		*vals = (*vals)[:ns]
 	}
-	copy(*vals, pt.KernelVals)
+	src := pt.kernelVarVals(vi)
+	if len(src) == 0 {
+		nan := math32.NaN()
+		for i := range *vals {
+			(*vals)[i] = nan
+		}
+		return nil
+	}
+	copy(*vals, src)
 	return nil
 }
 
@@ -218,7 +256,8 @@ func (pt *Path) Connect(slay, rlay *Layer, pat paths.Pattern, typ PathTypes) {
 }
 
 // allocBuffers allocates the weight readback buffers
-// for the [NSend][NRecv] kernel and the [NRecv] bias.
+// for the [NSend][NRecv] kernel and the [NRecv] bias,
+// along with the DWt gradient buffers.
 func (pt *Path) allocBuffers() {
 	nSend := pt.Send.Shape.Len()
 	nRecv := pt.Recv.Shape.Len()
@@ -232,6 +271,28 @@ func (pt *Path) allocBuffers() {
 	} else {
 		pt.BiasVals = pt.BiasVals[:nRecv]
 	}
+	if cap(pt.KernelDWt) < nSend*nRecv {
+		pt.KernelDWt = make([]float32, nSend*nRecv)
+	} else {
+		pt.KernelDWt = pt.KernelDWt[:nSend*nRecv]
+	}
+	if cap(pt.BiasDWt) < nRecv {
+		pt.BiasDWt = make([]float32, nRecv)
+	} else {
+		pt.BiasDWt = pt.BiasDWt[:nRecv]
+	}
+}
+
+// learnable returns true if this pathway can learn during the
+// Backward pass: it is not Off, and [PathParams.Learn] is On.
+func (pt *Path) learnable() bool {
+	return !pt.Off && pt.Params.Learn
+}
+
+// zeroDWt zeros the DWt gradient readback buffers.
+func (pt *Path) zeroDWt() {
+	clear(pt.KernelDWt)
+	clear(pt.BiasDWt)
 }
 
 // initWeights initializes the [Kernel] and [Bias] variable values
@@ -244,6 +305,7 @@ func (pt *Path) InitWeights() {
 	nRecv := pt.Recv.Shape.Len()
 	rand := pt.rand()
 	wip := &pt.Params.WtInit
+	pt.zeroDWt()
 
 	fanIn := float64(nSend)
 	fanOut := float64(nRecv)

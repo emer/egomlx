@@ -5,6 +5,7 @@
 package egomlx
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -280,4 +281,30 @@ func StatPerTrialMSec(statsDir *tensorfs.Node, trainMode enums.Enum, trialLevel 
 			tsr.AppendRow(stats.StatMean.Call(subDir.Value(name)))
 		}
 	}
+}
+
+// StatRMSE returns the root mean square error for given layer and data
+// parallel index di, in given network. Returns NaN if layer not found.
+// Uses Act and Targ unit state. thr is a unit-wise threshold: if error
+// is below this level, then it is 0.
+func StatRMSE(net *Network, layerName string, di int, thr float64) float64 {
+	ly := net.LayerByName(layerName)
+	if ly == nil {
+		return math.NaN()
+	}
+	viA, _ := ly.UnitVarIndex("Act")
+	viT, _ := ly.UnitVarIndex("Targ")
+	nu := ly.Shape.Len()
+	sum := float64(0)
+	for ui := range nu {
+		a := float64(ly.UnitValue1D(viA, ui, di))
+		t := float64(ly.UnitValue1D(viT, ui, di))
+		d := a - t
+		if math.Abs(d) < thr {
+			d = 0
+		}
+		sum += d * d
+	}
+	rms := math.Sqrt(sum / float64(nu))
+	return rms
 }

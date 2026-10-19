@@ -167,19 +167,35 @@ func LooperUpdateNetView(ls *looper.Stacks, cycle, trial enums.Enum, viewFunc fu
 // LooperStandard adds standard netview update and weight readback calls
 // to the given looper Stacks, for the given cycle and trial levels.
 // For feedforward backprop models, the trial OnEnd handler runs
-// the forward pass (and, in training mode, the backward pass),
-// and then updates the netview.
+// the forward pass (and, in training mode, the backward pass with
+// optimizer weight updates), and then updates the netview.
+// In training mode, DWt gradient values are read back only when the
+// netview is actively viewing synapses, to avoid the extra cost
+// otherwise: see [Network.Backward].
 func LooperStandard(ls *looper.Stacks, nt *Network, viewFunc func(mode enums.Enum) *NetViewUpdate, cycle, trial, trainMode enums.Enum) {
 	for mode, st := range ls.Stacks {
 		testing := mode.Int64() != trainMode.Int64()
 		trlLoop := st.Loops[trial]
 		trlLoop.OnEnd.Add("Forward", func() {
+			view := viewFunc(mode)
+			viewing := view != nil && view.IsViewingSynapse()
 			if testing {
 				nt.TestTrial()
-			} else {
-				nt.TrainTrial()
+				if viewing {
+					nt.ReadWeights()
+					view.RecordSyns() // note: critical to update weights before record
+				}
+				return
 			}
-			if view := viewFunc(mode); view != nil && view.IsViewingSynapse() {
+			dwts := DWtNone
+			if viewing {
+				dwts = DWtReadRaw
+			}
+			nt.TrainTrial(dwts)
+			if viewing {
+				// TrainTrial already read the updated weights if dwts
+				// was DWtReadRaw, but do it again to be certain the
+				// recorded values are current.
 				nt.ReadWeights()
 				view.RecordSyns() // note: critical to update weights before record
 			}

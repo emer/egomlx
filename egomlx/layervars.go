@@ -56,7 +56,10 @@ var NeuronVarProps = map[string]string{
 
 // SynapseVars is the list of synapse variable names available on
 // the synapses in a network.
-var SynapseVars = []string{"Wt"}
+// Wt is the weight value, and DWt is the weight change (gradient)
+// computed during the most recent [Network.Backward] pass, which is
+// only available if DWt readback was requested.
+var SynapseVars = []string{"Wt", "DWt"}
 
 // SynapseVarN is the number of synapse variables.
 var SynapseVarN = len(SynapseVars)
@@ -86,5 +89,6 @@ func SynapseVarIndexByName(varNm string) (int, error) {
 // and the value giving a space-separated list of
 // go-tag-style properties for that variable.
 var SynapseVarProps = map[string]string{
-	"Wt": `range:"0.5" desc:"weight of the connection" cat:"Wt"`,
+	"Wt":  `range:"0.5" desc:"weight of the connection" cat:"Wt"`,
+	"DWt": `range:"0.1" desc:"weight change (gradient) from most recent backward pass" cat:"Wt"`,
 }

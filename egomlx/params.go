@@ -17,6 +17,18 @@ import (
 
 // type aliases for params generic types that we use:
 type (
+	// NetworkSheets contains Network parameter Sheets.
+	NetworkSheets = params.Sheets[*NetworkParams]
+
+	// NetworkSheet is one Network parameter Sheet.
+	NetworkSheet = params.Sheet[*NetworkParams]
+
+	// NetworkSel is one Network parameter Selector.
+	NetworkSel = params.Sel[*NetworkParams]
+
+	// NetworkSearches is a list of Network parameter Search elements.
+	NetworkSearches = params.Searches[*NetworkParams]
+
 	// LayerSheets contains Layer parameter Sheets.
 	LayerSheets = params.Sheets[*LayerParams]
 
@@ -42,12 +54,15 @@ type (
 	PathSearches = params.Searches[*PathParams]
 )
 
-// Params contains the [LayerParams] and [PathParams] parameter setting functions
-// provided by the [emergent] [params] package.
+// Params contains the [NetworkParams], [LayerParams] and [PathParams]
+// parameter setting functions provided by the [emergent] [params] package.
 //
 //	emergent = github.com/emer/emergent/v2
 //	params = github.com/emer/emergent/v2/params
 type Params struct {
+
+	// Net has the parameters to apply to the [NetworkParams] for the network.
+	Net NetworkSheets `display:"-"`
 
 	// Layer has the parameters to apply to the [LayerParams] for layers.
 	Layer LayerSheets `display:"-"`
@@ -76,7 +91,12 @@ type Params struct {
 // Replace yoursim with the name of your sim package, i.e., the last
 // element of its import path, which is the name under which the sim
 // is exported to the interpreter (see [Params.Config]).
-var ScriptParams = `yoursim.Sim.Params.Layer["Script"] = &egomlx.LayerSheet{
+var ScriptParams = `yoursim.Sim.Params.Net["Script"] = &egomlx.NetworkSheet{
+	&egomlx.NetworkSel{Sel:"Network", Set: func(np *egomlx.NetworkParams) {
+		// set params
+	}},
+}
+yoursim.Sim.Params.Layer["Script"] = &egomlx.LayerSheet{
 	&egomlx.LayerSel{Sel:"Layer", Set: func(ly *egomlx.LayerParams) {
 		// set params
 	}},
@@ -95,7 +115,8 @@ yoursim.Sim.Params.Path["Script"] = &egomlx.PathSheet{
 // simPkg is the full import path of the sim package (e.g.,
 // "github.com/emer/egomlx/sims/ra25"), used to export the sim
 // to the interpreter under its package name.
-func (pr *Params) Config(layer LayerSheets, path PathSheets, extraSheets, tag, simPkg string, sim reflect.Value) {
+func (pr *Params) Config(net NetworkSheets, layer LayerSheets, path PathSheets, extraSheets, tag, simPkg string, sim reflect.Value) {
+	pr.Net = net
 	pr.Layer = layer
 	pr.Path = path
 	report := ""
@@ -118,21 +139,32 @@ func (pr *Params) Config(layer LayerSheets, path PathSheets, extraSheets, tag, s
 	i := strings.LastIndex(simPkg, "/")
 	simExport := simPkg + "/" + simPkg[i+1:]
 	egomlxEx := map[string]reflect.Value{
-		"LayerParams": reflect.ValueOf((*LayerParams)(nil)),
-		"PathParams":  reflect.ValueOf((*PathParams)(nil)),
-		"LayerSel":    reflect.ValueOf((*LayerSel)(nil)),
-		"LayerSheet":  reflect.ValueOf((*LayerSheet)(nil)),
-		"LayerSheets": reflect.ValueOf((*LayerSheets)(nil)),
-		"PathSel":     reflect.ValueOf((*PathSel)(nil)),
-		"PathSheet":   reflect.ValueOf((*PathSheet)(nil)),
-		"PathSheets":  reflect.ValueOf((*PathSheets)(nil)),
+		"NetworkParams": reflect.ValueOf((*NetworkParams)(nil)),
+		"NetworkSel":    reflect.ValueOf((*NetworkSel)(nil)),
+		"NetworkSheet":  reflect.ValueOf((*NetworkSheet)(nil)),
+		"NetworkSheets": reflect.ValueOf((*NetworkSheets)(nil)),
+		"LayerParams":   reflect.ValueOf((*LayerParams)(nil)),
+		"PathParams":    reflect.ValueOf((*PathParams)(nil)),
+		"LayerSel":      reflect.ValueOf((*LayerSel)(nil)),
+		"LayerSheet":    reflect.ValueOf((*LayerSheet)(nil)),
+		"LayerSheets":   reflect.ValueOf((*LayerSheets)(nil)),
+		"PathSel":       reflect.ValueOf((*PathSel)(nil)),
+		"PathSheet":     reflect.ValueOf((*PathSheet)(nil)),
+		"PathSheets":    reflect.ValueOf((*PathSheets)(nil)),
 	}
-	// enum values, for use in scripts to set activation and weight init params
+	// enum values, for use in scripts to set activation, weight init,
+	// loss function and optimizer params
 	for _, av := range ActFunsValues() {
 		egomlxEx[av.String()] = reflect.ValueOf(av)
 	}
 	for _, wk := range WtInitsValues() {
 		egomlxEx[wk.String()] = reflect.ValueOf(wk)
+	}
+	for _, lf := range LossFunsValues() {
+		egomlxEx[lf.String()] = reflect.ValueOf(lf)
+	}
+	for _, op := range OptimizersValues() {
+		egomlxEx[op.String()] = reflect.ValueOf(op)
 	}
 	pr.Interp.Use(interp.Exports{
 		"github.com/emer/egomlx/egomlx": egomlxEx,
@@ -166,7 +198,8 @@ func (pr *Params) RunName(startRun int) string {
 
 // ApplyAll applies all parameters to given network,
 // using "Base" Sheet then any ExtraSheets,
-// for Layer and Path params (each must have the named sheets,
+// for Network (if any sheets are defined), Layer and Path params
+// (each must have the named sheets,
 // for proper error checking in case of typos).
 func (pr *Params) ApplyAll(net *Network) {
 	pr.ApplySheet(net, "Base")
@@ -190,9 +223,18 @@ func (pr *Params) ApplyAll(net *Network) {
 }
 
 // ApplySheet applies parameters for given [params.Sheet] name
-// for Layer and Path params (each must have the named sheets,
-// for proper error checking in case of typos).
+// for Network (if any sheets are defined), Layer and Path params
+// (each must have the named sheets, for proper error checking in
+// case of typos).
 func (pr *Params) ApplySheet(net *Network, sheetName string) error {
+	var nsheet *params.Sheet[*NetworkParams]
+	if len(pr.Net) > 0 {
+		ns, err := pr.Net.SheetByName(sheetName)
+		if err != nil {
+			return err
+		}
+		nsheet = ns
+	}
 	lsheet, err := pr.Layer.SheetByName(sheetName)
 	if err != nil {
 		return err
@@ -201,13 +243,37 @@ func (pr *Params) ApplySheet(net *Network, sheetName string) error {
 	if err != nil {
 		return err
 	}
+	if nsheet != nil {
+		nsheet.SelMatchReset()
+	}
 	lsheet.SelMatchReset()
 	psheet.SelMatchReset()
 
+	ApplyNetworkSheet(net, nsheet)
 	ApplyParamSheets(net, lsheet, psheet)
+	if nsheet != nil {
+		nsheet.SelNoMatchWarn(sheetName, net.Name)
+	}
 	lsheet.SelNoMatchWarn(sheetName, net.Name)
 	psheet.SelNoMatchWarn(sheetName, net.Name)
 	return nil
+}
+
+// ApplyNetworkSheet applies Network parameters from given sheet,
+// returning true if any applied. A nil sheet is a no-op.
+// It updates the network parameters, which rebuilds the model
+// graphs so that any optimizer-related changes take effect.
+func ApplyNetworkSheet(net *Network, sheet *params.Sheet[*NetworkParams]) bool {
+	if sheet == nil {
+		return false
+	}
+	applied := false
+	app := sheet.Apply(&net.Params)
+	net.UpdateParams()
+	if app {
+		applied = true
+	}
+	return applied
 }
 
 // ApplyParamSheets applies Layer and Path parameters from given sheets,
@@ -267,6 +333,23 @@ func ApplyLayerSearch(net *Network, sr params.Searches[*LayerParams], paramIndex
 	}
 	if !applied {
 		return lbl, fmt.Errorf("No matches for Layer parameter search: %s", lbl)
+	}
+	return lbl, nil
+}
+
+// ApplyNetworkSearch applies Network [params.Searches] to network
+// for parameter at given param index within that search,
+// returning error for invalid index, and if no matching selections.
+// Returns string descriptor for parameter to record in job.label.
+func ApplyNetworkSearch(net *Network, sr params.Searches[*NetworkParams], paramIndex int) (string, error) {
+	ps, val, lbl, err := sr.SearchValue(paramIndex)
+	if err != nil {
+		return lbl, err
+	}
+	app := ps.Apply(&net.Params, val)
+	net.UpdateParams()
+	if !app {
+		return lbl, fmt.Errorf("No matches for Network parameter search: %s", lbl)
 	}
 	return lbl, nil
 }

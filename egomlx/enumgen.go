@@ -133,6 +133,131 @@ func (i *ViewTimes) UnmarshalText(text []byte) error {
 	return enums.UnmarshalText(i, text, "ViewTimes")
 }
 
+var _DWtTypesValues = []DWtTypes{0, 1}
+
+// DWtTypesN is the highest valid value for type DWtTypes, plus one.
+const DWtTypesN DWtTypes = 2
+
+var _DWtTypesValueMap = map[string]DWtTypes{`DWtNone`: 0, `DWtReadRaw`: 1}
+
+var _DWtTypesDescMap = map[DWtTypes]string{0: `DWtNone does not read back any DWt values -- only the overall loss value is returned: the most efficient option.`, 1: `DWtReadRaw reads back the raw gradients (pre-optimizer) computed for each learning pathway, into the [Path] [Path.KernelDWt] and [Path.BiasDWt] buffers, along with the updated weight values.`}
+
+var _DWtTypesMap = map[DWtTypes]string{0: `DWtNone`, 1: `DWtReadRaw`}
+
+// String returns the string representation of this DWtTypes value.
+func (i DWtTypes) String() string { return enums.String(i, _DWtTypesMap) }
+
+// SetString sets the DWtTypes value from its string representation,
+// and returns an error if the string is invalid.
+func (i *DWtTypes) SetString(s string) error {
+	return enums.SetString(i, s, _DWtTypesValueMap, "DWtTypes")
+}
+
+// Int64 returns the DWtTypes value as an int64.
+func (i DWtTypes) Int64() int64 { return int64(i) }
+
+// SetInt64 sets the DWtTypes value from an int64.
+func (i *DWtTypes) SetInt64(in int64) { *i = DWtTypes(in) }
+
+// Desc returns the description of the DWtTypes value.
+func (i DWtTypes) Desc() string { return enums.Desc(i, _DWtTypesDescMap) }
+
+// DWtTypesValues returns all possible values for the type DWtTypes.
+func DWtTypesValues() []DWtTypes { return _DWtTypesValues }
+
+// Values returns all possible values for the type DWtTypes.
+func (i DWtTypes) Values() []enums.Enum { return enums.Values(_DWtTypesValues) }
+
+// MarshalText implements the [encoding.TextMarshaler] interface.
+func (i DWtTypes) MarshalText() ([]byte, error) { return []byte(i.String()), nil }
+
+// UnmarshalText implements the [encoding.TextUnmarshaler] interface.
+func (i *DWtTypes) UnmarshalText(text []byte) error { return enums.UnmarshalText(i, text, "DWtTypes") }
+
+var _LossFunsValues = []LossFuns{0, 1, 2}
+
+// LossFunsN is the highest valid value for type LossFuns, plus one.
+const LossFunsN LossFuns = 3
+
+var _LossFunsValueMap = map[string]LossFuns{`SSE`: 0, `MSE`: 1, `BCE`: 2}
+
+var _LossFunsDescMap = map[LossFuns]string{0: `SSE is the sum of squared errors: 0.5 * sum over units of (Act - Targ)^2, summed over target layers, and divided by NData so the gradients are independent of the number of parallel data items. This is the standard emergent / leabra error function for backprop models, and it gives dLoss/dAct = (Act - Targ) / NData.`, 1: `MSE is the mean squared error: mean of (Act - Targ)^2 over all units and data items, summed over target layers.`, 2: `BCE is the binary cross-entropy loss, summed over target layers: -Targ * log(Act) - (1 - Targ) * log(1 - Act), averaged over all units and data items. Requires a bounded 0-1 activation such as [Sigmoid] on the target layers for the loss to be well-defined.`}
+
+var _LossFunsMap = map[LossFuns]string{0: `SSE`, 1: `MSE`, 2: `BCE`}
+
+// String returns the string representation of this LossFuns value.
+func (i LossFuns) String() string { return enums.String(i, _LossFunsMap) }
+
+// SetString sets the LossFuns value from its string representation,
+// and returns an error if the string is invalid.
+func (i *LossFuns) SetString(s string) error {
+	return enums.SetString(i, s, _LossFunsValueMap, "LossFuns")
+}
+
+// Int64 returns the LossFuns value as an int64.
+func (i LossFuns) Int64() int64 { return int64(i) }
+
+// SetInt64 sets the LossFuns value from an int64.
+func (i *LossFuns) SetInt64(in int64) { *i = LossFuns(in) }
+
+// Desc returns the description of the LossFuns value.
+func (i LossFuns) Desc() string { return enums.Desc(i, _LossFunsDescMap) }
+
+// LossFunsValues returns all possible values for the type LossFuns.
+func LossFunsValues() []LossFuns { return _LossFunsValues }
+
+// Values returns all possible values for the type LossFuns.
+func (i LossFuns) Values() []enums.Enum { return enums.Values(_LossFunsValues) }
+
+// MarshalText implements the [encoding.TextMarshaler] interface.
+func (i LossFuns) MarshalText() ([]byte, error) { return []byte(i.String()), nil }
+
+// UnmarshalText implements the [encoding.TextUnmarshaler] interface.
+func (i *LossFuns) UnmarshalText(text []byte) error { return enums.UnmarshalText(i, text, "LossFuns") }
+
+var _OptimizersValues = []Optimizers{0, 1, 2, 3, 4}
+
+// OptimizersN is the highest valid value for type Optimizers, plus one.
+const OptimizersN Optimizers = 5
+
+var _OptimizersValueMap = map[string]Optimizers{`SGD`: 0, `Adam`: 1, `AdamW`: 2, `Adamax`: 3, `RMSProp`: 4}
+
+var _OptimizersDescMap = map[Optimizers]string{0: `SGD is plain stochastic gradient descent: Wt -= LRate * DWt. See [NetworkParams.SGDDecay] for optional learning rate decay.`, 1: `Adam is the Adam optimizer (Kingma &amp; Ba 2014), with adaptive per-weight learning rates based on first and second moment estimates of the gradients: [NetworkParams.Beta1], Beta2, Epsilon.`, 2: `AdamW is Adam with decoupled weight decay (AdamW), using [NetworkParams.WeightDecay].`, 3: `Adamax is Adam with an L-infinity (max) norm for the second moment estimate, which can be better for gradients with spikes.`, 4: `RMSProp divides the learning rate by a running average of the recent gradient magnitudes (Adam without the first moment).`}
+
+var _OptimizersMap = map[Optimizers]string{0: `SGD`, 1: `Adam`, 2: `AdamW`, 3: `Adamax`, 4: `RMSProp`}
+
+// String returns the string representation of this Optimizers value.
+func (i Optimizers) String() string { return enums.String(i, _OptimizersMap) }
+
+// SetString sets the Optimizers value from its string representation,
+// and returns an error if the string is invalid.
+func (i *Optimizers) SetString(s string) error {
+	return enums.SetString(i, s, _OptimizersValueMap, "Optimizers")
+}
+
+// Int64 returns the Optimizers value as an int64.
+func (i Optimizers) Int64() int64 { return int64(i) }
+
+// SetInt64 sets the Optimizers value from an int64.
+func (i *Optimizers) SetInt64(in int64) { *i = Optimizers(in) }
+
+// Desc returns the description of the Optimizers value.
+func (i Optimizers) Desc() string { return enums.Desc(i, _OptimizersDescMap) }
+
+// OptimizersValues returns all possible values for the type Optimizers.
+func OptimizersValues() []Optimizers { return _OptimizersValues }
+
+// Values returns all possible values for the type Optimizers.
+func (i Optimizers) Values() []enums.Enum { return enums.Values(_OptimizersValues) }
+
+// MarshalText implements the [encoding.TextMarshaler] interface.
+func (i Optimizers) MarshalText() ([]byte, error) { return []byte(i.String()), nil }
+
+// UnmarshalText implements the [encoding.TextUnmarshaler] interface.
+func (i *Optimizers) UnmarshalText(text []byte) error {
+	return enums.UnmarshalText(i, text, "Optimizers")
+}
+
 var _PathTypesValues = []PathTypes{0, 1}
 
 // PathTypesN is the highest valid value for type PathTypes, plus one.

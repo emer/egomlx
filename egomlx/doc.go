@@ -41,8 +41,16 @@
 // The [Network.Forward] method runs a real forward pass through the
 // [gomlx] model, reading back all activations and weights, so that the
 // [netview] shows genuinely computed values.
-// Training (backpropagation and weight updates) is not yet implemented
-// and is stubbed out: [Network.Backward] is currently a no-op.
+//
+// The [Network.Backward] method runs the backward learning pass: it
+// computes the loss between the Act and Targ values of the [Target]
+// layers, backpropagates gradients via [gomlx] automatic differentiation,
+// and applies weight updates using the optimizer configured in the
+// [NetworkParams], all within a single compiled computation graph.
+// [Network.TrainTrial] runs Forward followed by Backward.
+// The global loss function and optimizer parameters live in
+// [NetworkParams], while pathway-specific learning parameters
+// (currently [PathParams.Learn]) live in the [PathParams].
 package egomlx
 
 //go:generate core generate -add-types -add-funcs
