@@ -21,9 +21,17 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
+# Go workspace file (local development)
 go.work
 go.work.sum
+
+# simulation outputs (stats, weights, params snapshots)
+Root/
+weights_*.json
+params_*/
+
+# sim binaries
+sims/ra25/ra25/ra25
 
 # env file
 .env
