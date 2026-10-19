@@ -25,3 +25,8 @@ $ core run [platform]
 ```
 
 See the [sims/ra25 README](sims/ra25/README.md) for full instructions.
+
+## Use of AI
+
+This is coded largely using AI tools, under strong human supervision.
+
