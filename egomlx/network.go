@@ -320,6 +320,22 @@ func (nt *Network) AddLayer2D(name string, tp LayerTypes, y, x int) *Layer {
 	return ly
 }
 
+// AddLayer4D adds a new 4D layer with the given name, type,
+// and pool Y, X and unit Y, X shape dimensions, returning it.
+// The 4D shape organizes units into pools (e.g., hypercolumns) for
+// display and for pool-based stats; computationally the layer is
+// treated as a flat vector of all its units (Full connectivity).
+// The layer should then be connected with [ConnectLayers].
+func (nt *Network) AddLayer4D(name string, tp LayerTypes, poolY, poolX, unitY, unitX int) *Layer {
+	ly := &Layer{Type: tp, Network: nt}
+	emer.InitLayer(ly, name)
+	ly.SetShape(poolY, poolX, unitY, unitX)
+	ly.Params.Layer = ly
+	nt.Layers = append(nt.Layers, ly)
+	nt.UpdateLayerNameMap()
+	return ly
+}
+
 // AddLayer1D adds a new 1D layer with the given name, type,
 // and number of units, returning it.
 // The layer should then be connected with [ConnectLayers].
