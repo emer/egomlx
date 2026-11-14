@@ -39,3 +39,7 @@ sims/ra25/ra25/ra25
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# local files
+.DS_Store
+sims/**/config*.toml
