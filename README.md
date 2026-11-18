@@ -1,5 +1,12 @@
 # egomlx
 
+<p align="center">
+    <a href="https://pkg.go.dev/github.com/emer/egomlx"><img src="https://img.shields.io/badge/dev-reference-007d9c?logo=go&logoColor=white&style=flat" alt="pkg.go.dev docs"></a>
+    <a href="https://github.com/emer/egomlx/actions"><img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/emer/egomlx/go.yml"></a>
+    <a href="https://raw.githack.com/wiki/emer/egomlx/coverage.html"><img alt="Test Coverage" src="https://github.com/emer/egomlx/wiki/coverage.svg"></a>
+    <a href="https://github.com/emer/egomlx/tags"><img alt="Version" src="https://img.shields.io/github/v/tag/emer/egomlx?label=version&color=blue"></a>
+</p>
+
 A toolkit for building, visualizing, and controlling [gomlx](https://github.com/gomlx/gomlx) neural network models using the [emergent](https://github.com/emer/emergent) GUI, including the [netview](https://github.com/emer/emergent/wiki/NetView) for displaying and interacting with the network.
 
 ## Structure
