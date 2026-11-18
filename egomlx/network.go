@@ -5,6 +5,9 @@
 package egomlx
 
 import (
+	"time"
+
+	"cogentcore.org/core/base/timer"
 	"fmt"
 	"slices"
 
@@ -86,10 +89,10 @@ type Network struct {
 	Params NetworkParams `display:"inline"`
 
 	// Backend is the [gomlx] compute backend used for the model.
-	// By default, this is the first registered backend, which is
-	// the pure-Go CPU backend (gobackend), registered by the
-	// gomlx backends/default package. Use [SetBackend] to select
-	// a different backend, e.g., an XLA CPU or GPU backend.
+	// By default, this is the backend named by the GOMLX_BACKEND
+	// environment variable (e.g., xla, mps, mlx), or XLA if not set
+	// (see compute.MustNew). Use [SetBackend] to select a different
+	// backend in code.
 	Backend compute.Backend `display:"-"`
 
 	// Store is the [gomlx] variable store for the model,
@@ -155,6 +158,18 @@ type Network struct {
 	// buildingTrain is true while building the training graph, which
 	// enables dropout ([ActParams.Dropout]).
 	buildingTrain bool
+
+	// CompileTimer times the graph building and compilation ([Network.Build],
+	// [Network.UpdateParams]), separately from the computation.
+	// Graphs for new NData shapes are compiled on their first call,
+	// which is included in the Forward or Backward timer.
+	CompileTimer timer.Time `display:"-"`
+
+	// ForwardTimer times the computation of the [Network.Forward] passes.
+	ForwardTimer timer.Time `display:"-"`
+
+	// BackwardTimer times the computation of the [Network.Backward] passes.
+	BackwardTimer timer.Time `display:"-"`
 }
 
 // gradPath records which pathway variable a DWt gradient
@@ -329,7 +344,8 @@ func (nt *Network) AddLayer2D(name string, tp LayerTypes, y, x int) *Layer {
 // and pool Y, X and unit Y, X shape dimensions, returning it.
 // The 4D shape organizes units into pools (e.g., hypercolumns) for
 // display and for pool-based stats; computationally the layer is
-// treated as a flat vector of all its units (Full connectivity).
+// treated as a flat vector of all its units, and pool-based
+// connectivity (e.g., [paths.PoolOneToOne]) is applied with a mask.
 // The layer should then be connected with [ConnectLayers].
 func (nt *Network) AddLayer4D(name string, tp LayerTypes, poolY, poolX, unitY, unitX int) *Layer {
 	ly := &Layer{Type: tp, Network: nt}
@@ -357,13 +373,10 @@ func (nt *Network) AddLayer1D(name string, tp LayerTypes, n int) *Layer {
 // ConnectLayers connects the given sending and receiving layers
 // with a new [Path] of the given type, using the given connectivity
 // pattern, returning the path.
-// The current toolkit version supports only the [paths.Full]
-// full connectivity pattern, because [gomlx] dense layers
-// are fully connected.
+// Any pattern is supported: the [gomlx] dense layer is fully connected,
+// and other patterns (e.g., [paths.PoolOneToOne]) are implemented by
+// multiplying its weights by a fixed connectivity mask (see [Path.Mask]).
 func (nt *Network) ConnectLayers(send, recv *Layer, pat paths.Pattern, typ PathTypes) *Path {
-	if pat.Name() != "Full" {
-		errors.Log(fmt.Errorf("ConnectLayers: %s -> %s: only the Full connectivity pattern is supported in the current egomlx toolkit, got: %s", send.Name, recv.Name, pat.Name()))
-	}
 	pt := &Path{}
 	emer.InitPath(pt)
 	pt.Connect(send, recv, pat, typ)
@@ -395,6 +408,7 @@ func (nt *Network) Build() error {
 		nt.OutputLayers = append(nt.OutputLayers, ly)
 		nFwd := 0
 		for _, pt := range ly.RecvPaths {
+			pt.SetMask()
 			if pt.Params.Type.IsRecurrent() {
 				continue
 			}
@@ -445,6 +459,8 @@ func (nt *Network) buildGraph() error {
 	if len(nt.Layers) == 0 {
 		return nil
 	}
+	nt.CompileTimer.Start()
+	defer nt.CompileTimer.Stop()
 	if nt.Store == nil {
 		nt.Store = model.NewStore()
 	}
@@ -778,12 +794,17 @@ func (nt *Network) Forward() error {
 		return errors.Log(fmt.Errorf("Network: Forward: %w", err))
 	}
 	args = append(args, nt.carryArgs()...)
+	nt.ForwardTimer.Start() // includes the readback of the results, which waits for the computation
 	outs, err := nt.Exec.Call(args...)
 	if err != nil {
+		nt.ForwardTimer.Stop()
 		return errors.Log(fmt.Errorf("Network: Forward: %w", err))
 	}
 	for li, ly := range nt.OutputLayers {
 		ly.readbackAct(outs[2*li : 2*li+2])
+	}
+	nt.ForwardTimer.Stop()
+	for _, ly := range nt.OutputLayers {
 		ly.readbackBias()
 	}
 	nt.ReadWeights()
@@ -973,11 +994,14 @@ func (nt *Network) Backward(updtDWt ...DWtTypes) error {
 	if dwts == DWtReadRaw && nt.TrainVisExec != nil {
 		ex = nt.TrainVisExec
 	}
+	nt.BackwardTimer.Start() // includes reading the loss, which waits for the computation
 	outs, err := ex.Call(args...)
 	if err != nil {
+		nt.BackwardTimer.Stop()
 		return errors.Log(fmt.Errorf("Network: Backward: %w", err))
 	}
 	nt.Loss = readScalar(outs[0])
+	nt.BackwardTimer.Stop()
 	if math32.IsNaN(nt.Loss) {
 		errors.Log(fmt.Errorf("Network: Backward: loss is NaN -- check input / target values and network stability"))
 	}
@@ -1055,4 +1079,18 @@ func (nt *Network) GlobalStep() int64 {
 		return 0
 	}
 	return optimizer.GetGlobalStep(nt.Store)
+}
+
+// TimerReport returns a report of the [Network.CompileTimer],
+// [Network.ForwardTimer], and [Network.BackwardTimer] totals and counts,
+// and the compute backend.
+func (nt *Network) TimerReport() string {
+	rep := func(nm string, t *timer.Time) string {
+		return fmt.Sprintf("%s: %v total, %d calls, %v avg\n", nm, t.Total.Round(time.Millisecond), t.N, t.Avg().Round(time.Microsecond))
+	}
+	backend := ""
+	if nt.Backend != nil {
+		backend = nt.Backend.Name()
+	}
+	return fmt.Sprintf("Network %s timing (backend %s):\n", nt.Name, backend) + rep("  Compile ", &nt.CompileTimer) + rep("  Forward ", &nt.ForwardTimer) + rep("  Backward", &nt.BackwardTimer)
 }

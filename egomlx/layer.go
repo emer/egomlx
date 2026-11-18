@@ -194,7 +194,7 @@ func (ly *Layer) Defaults() {
 func (ly *Layer) UpdateParams() {
 	ly.Params.Update()
 	for _, pt := range ly.RecvPaths {
-		pt.UpdateParams()
+		pt.Params.Update() // not pt.UpdateParams, which rebuilds the network for each path
 	}
 	if ly.Network != nil {
 		ly.Network.UpdateParams()

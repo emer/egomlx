@@ -3,10 +3,10 @@ module github.com/emer/egomlx
 go 1.27.0
 
 require (
-	cogentcore.org/core v0.5.36
-	cogentcore.org/lab v0.2.17
+	cogentcore.org/core v0.5.44
+	cogentcore.org/lab v0.2.21
 	github.com/cogentcore/yaegi v0.0.0-20260116172027-700fbf8949f3
-	github.com/emer/emergent/v2 v2.0.4
+	github.com/emer/emergent/v2 v2.0.5
 	github.com/gomlx/compute v0.1.28
 	github.com/gomlx/gomlx v0.28.34
 )
@@ -38,7 +38,6 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
-	github.com/gomarkdown/markdown v0.0.0-20260724235538-61af6e1e6971 // indirect
 	github.com/gomlx/compute-onnx v0.1.28 // indirect
 	github.com/gomlx/go-darwinml v0.1.5 // indirect
 	github.com/gomlx/go-xla v0.4.28 // indirect
@@ -65,6 +64,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sgtdi/fswatcher v1.3.0 // indirect
 	github.com/tdewolff/parse/v2 v2.8.5 // indirect
+	github.com/yuin/goldmark/v2 v2.1.16 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/exp/shiny v0.0.0-20240416160154-fe59bbe5cc7f // indirect
 	golang.org/x/image v0.44.0 // indirect

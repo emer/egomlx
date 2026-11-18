@@ -14,6 +14,53 @@ The **forward pass** is fully implemented and live: activations, the output erro
 
 **Recurrent settling**: with `NetworkParams.NCycles` > 1, the network is unrolled for that many cycles, with the weights shared across cycles. `Forward` paths use the sender's current-cycle activity, and the recurrent `Back` and `Lateral` paths use the sender's previous-cycle activity (zero on the first cycle). The loss is computed on the final cycle, so learning is backpropagation through time. `ActParams.Noise` adds Gaussian noise to a layer's net input on every cycle. `NetworkParams.Decay` < 1 carries over the final activity of the previous trial: the first cycle of the next trial starts from (1 − Decay) times that activity, within each data-parallel stream, with no gradient flowing back into the previous trial. `ActParams.Dropout` sets a layer's activity to zero with that probability on each cycle of the training passes only (scaling the rest to keep the mean), with no effect on Forward passes.
 
+**Connectivity**: `ConnectLayers` accepts any `paths.Pattern`. Each pathway is a dense gomlx layer, and patterns other than full connectivity (e.g., `paths.PoolOneToOne`) are implemented by multiplying its weights by a fixed 0/1 connectivity mask (`Path.Mask`), so the unconnected weights stay zero and get no gradient. The weights are initialized using the actual number of connected senders (`Path.FanIn`). Note that `paths.Full` leaves out each unit's connection to itself for a lateral (self) pathway, unless its `SelfCon` is set.
+
+**Backends and timing**: see [Compute backends](#compute-backends) below.
+
+## Compute backends
+
+gomlx runs the compiled graphs on a pluggable backend. `compute.MustNew()` picks the backend named by the environment variable `GOMLX_BACKEND`, and uses XLA if it is not set. `Network.SetBackend` sets one explicitly in code.
+
+| `GOMLX_BACKEND` | Hardware (macOS) | Notes |
+|---|---|---|
+| `xla` (default) | CPU | XLA has no GPU support on macOS. Slowest to compile, fastest per call for small networks. Uses several CPU threads. |
+| `mps` | Apple GPU | Metal Performance Shaders, from go-darwinml. No extra install needed. |
+| `mlx` | Apple GPU | Apple MLX, from go-darwinml. Needs the MLX library: `brew install mlx`, and then a full rebuild (see below). |
+
+For example:
+
+```sh
+GOMLX_BACKEND=mlx ./conflict_rnn -nogui
+```
+
+`Network.TimerReport` names the backend in use, so check it to confirm that the one you asked for was picked up.
+
+### Rebuilding after installing MLX
+
+go-darwinml decides whether to include MLX support **at compile time**, by checking whether the MLX headers exist (`__has_include(<mlx/mlx.h>)`). Go's build cache does not notice when those headers are installed later. So a binary built before `brew install mlx` keeps reporting "MLX is not installed", even after rebuilding normally. Force a full rebuild once, which refreshes the cached cgo package:
+
+```sh
+brew install mlx
+go build -a .
+```
+
+After that, ordinary builds of any program pick up the MLX-enabled package from the cache. Do the same after upgrading or removing MLX.
+
+### Timing
+
+`Network.CompileTimer`, `ForwardTimer` and `BackwardTimer` time graph compilation separately from the computation (each `Exec` call, including reading back the results), and `Network.TimerReport` reports all three. Changing the network parameters (`UpdateParams`) or the batch shape rebuilds the graphs, so applying params in bulk (one `UpdateParams` per sheet) keeps the number of compiles down.
+
+For reference, a 40-epoch run of the small recurrent `conflict_rnn` network (10 cycles, batch of 16, on an Apple Silicon Mac) gave identical results on all three backends, with these times:
+
+| Backend | Wall | CPU (user) | Compile (9 graphs) | Forward / call | Backward / call |
+|---|---|---|---|---|---|
+| XLA | 8.2 s | 14.9 s | 2.17 s | 0.58 ms | 2.17 ms |
+| MPS | 11.6 s | 7.8 s | 0.44 s | 1.36 ms | 4.48 ms |
+| MLX | 10.9 s | 4.9 s | 0.02 s | 1.62 ms | 4.09 ms |
+
+For small networks and batches like this, the per-call overhead of the GPU backends outweighs their compute advantage, so XLA on the CPU is fastest for a single run. MLX compiles almost instantly and uses the least CPU, so it may be the better choice for running many jobs in parallel. Larger networks and batches should favor the GPU backends.
+
 ## Requirements
 
 * Go with the [Cogent Core](https://cogentcore.org/core) GUI framework. See [install](https://www.cogentcore.org/core/setup/install) instructions there.

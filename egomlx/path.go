@@ -86,6 +86,17 @@ type Path struct {
 	// It is created when the network is built.
 	Kernel *model.Variable `display:"-"`
 
+	// Mask is the connectivity mask from the [paths.Pattern], with
+	// the [NSend, NRecv] shape of the Kernel: 1 = connected, 0 = not.
+	// The Kernel is multiplied by it in the graph, so the unconnected
+	// weights have no effect and get no gradient. Nil if all of the
+	// units are connected (e.g., a Full pattern). Set by [Path.SetMask].
+	Mask []float32 `display:"-"`
+
+	// FanIn is the mean number of sending units connected to each
+	// receiving unit, used for weight initialization.
+	FanIn int `edit:"-"`
+
 	// Bias is the [gomlx] variable for the dense transformation
 	// bias term, with shape [NRecv].
 	// It is created when the network is built.
@@ -310,7 +321,10 @@ func (pt *Path) InitWeights() {
 	wip := &pt.Params.WtInit
 	pt.zeroDWt()
 
-	fanIn := float64(nSend)
+	if pt.FanIn == 0 {
+		pt.SetMask()
+	}
+	fanIn := float64(pt.FanIn)
 	fanOut := float64(nRecv)
 	limit := func() float64 {
 		switch wip.Init {
@@ -344,6 +358,12 @@ func (pt *Path) InitWeights() {
 			kv[i] = float32((rand.Float64()*2 - 1) * limit)
 		case Zero:
 			kv[i] = 0
+		}
+	}
+
+	if pt.Mask != nil {
+		for i, m := range pt.Mask {
+			kv[i] *= m
 		}
 	}
 
@@ -444,6 +464,34 @@ func (pt *Path) SetWtValue(sidx, ridx int, val float32) error {
 // has no activity yet: the output is then nil (no input, including no
 // bias). first is true on the first cycle, when the weights are read
 // back for display.
+// SetMask sets the [Path.Mask] and [Path.FanIn] from the connectivity
+// [paths.Pattern]. The Mask is nil if all units are connected.
+func (pt *Path) SetMask() {
+	nSend := pt.Send.Shape.Len()
+	nRecv := pt.Recv.Shape.Len()
+	pt.Mask = nil
+	pt.FanIn = nSend
+	if pt.Pattern == nil {
+		return
+	}
+	_, _, cons := pt.Pattern.Connect(&pt.Send.Shape, &pt.Recv.Shape, pt.Send == pt.Recv)
+	mask := make([]float32, nSend*nRecv)
+	ncon := 0
+	for ri := range nRecv {
+		for si := range nSend {
+			if cons.Value1D(ri*nSend + si) {
+				mask[si*nRecv+ri] = 1
+				ncon++
+			}
+		}
+	}
+	if ncon == nSend*nRecv {
+		return
+	}
+	pt.Mask = mask
+	pt.FanIn = max(1, ncon/nRecv)
+}
+
 func (pt *Path) buildDense(scope *Scope, g *graph.Graph, send *graph.Node, first bool) (*graph.Node, error) {
 	var dscope *Scope
 	if first {
@@ -461,6 +509,9 @@ func (pt *Path) buildDense(scope *Scope, g *graph.Graph, send *graph.Node, first
 	pt.Bias = dscope.VariableWithShape("bias", shapes.Make(dtypes.Float32, nRecv))
 
 	kNode := pt.Kernel.NodeValue(g)
+	if pt.Mask != nil {
+		kNode = graph.Mul(kNode, graph.Const(g, tensors.FromFlatDataAndDimensions(pt.Mask, nSend, nRecv)))
+	}
 	var bNode *graph.Node
 	if pt.Params.UseBias {
 		bNode = pt.Bias.NodeValue(g)

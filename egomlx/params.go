@@ -290,11 +290,12 @@ func ApplyLayerSheet(net *Network, sheet *params.Sheet[*LayerParams]) bool {
 	applied := false
 	for _, ly := range net.Layers {
 		app := sheet.Apply(&ly.Params)
-		ly.UpdateParams()
+		ly.Params.Update()
 		if app {
 			applied = true
 		}
 	}
+	net.UpdateParams() // rebuild once for all the layers
 	return applied
 }
 
@@ -305,12 +306,13 @@ func ApplyPathSheet(net *Network, sheet *params.Sheet[*PathParams]) bool {
 	for _, ly := range net.Layers {
 		for _, pt := range ly.RecvPaths {
 			app := sheet.Apply(&pt.Params)
-			pt.UpdateParams()
+			pt.Params.Update()
 			if app {
 				applied = true
 			}
 		}
 	}
+	net.UpdateParams() // rebuild once for all the paths
 	return applied
 }
 
@@ -326,11 +328,12 @@ func ApplyLayerSearch(net *Network, sr params.Searches[*LayerParams], paramIndex
 	applied := false
 	for _, ly := range net.Layers {
 		app := ps.Apply(&ly.Params, val)
-		ly.UpdateParams()
+		ly.Params.Update()
 		if app {
 			applied = true
 		}
 	}
+	net.UpdateParams() // rebuild once
 	if !applied {
 		return lbl, fmt.Errorf("No matches for Layer parameter search: %s", lbl)
 	}
@@ -367,12 +370,13 @@ func ApplyPathSearch(net *Network, sr params.Searches[*PathParams], paramIndex i
 	for _, ly := range net.Layers {
 		for _, pt := range ly.RecvPaths {
 			app := ps.Apply(&pt.Params, val)
-			pt.UpdateParams()
+			pt.Params.Update()
 			if app {
 				applied = true
 			}
 		}
 	}
+	net.UpdateParams() // rebuild once
 	if !applied {
 		return lbl, fmt.Errorf("No matches for Path parameter search: %s", lbl)
 	}
