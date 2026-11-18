@@ -16,6 +16,17 @@ type ActParams struct {
 
 	// LeakySlope is the slope for the LeakyReLU activation function.
 	LeakySlope float64 `default:"0.01"`
+
+	// Noise is the standard deviation of Gaussian noise added to the net
+	// input of the layer on every cycle (see [NetworkParams.NCycles]),
+	// in both training and testing. 0 = no noise.
+	Noise float64 `default:"0"`
+
+	// Dropout is the probability of setting each unit's activity to zero,
+	// on each cycle of the training passes only (Backward), with the other
+	// activities scaled by 1 / (1 - Dropout) to keep the mean the same.
+	// It has no effect on Forward (testing) passes. 0 = no dropout.
+	Dropout float64 `default:"0" min:"0" max:"1"`
 }
 
 // ActFuns enumerates the activation functions that can be applied

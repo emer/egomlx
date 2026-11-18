@@ -54,6 +54,10 @@ type Layer struct {
 	// Allocated by the network Build method.
 	NeuronVars []float32 `display:"-"`
 
+	// PrevAct has the final Act values of the previous trial, [NData][NUnits],
+	// saved in [Network.ApplyExts], for carryover ([NetworkParams.Decay]).
+	PrevAct []float32 `display:"-"`
+
 	// Input is the graph input node for an input layer -- the
 	// runtime values of the layer's Act, with no transformation.
 	// Nil for non-input layers.
@@ -257,6 +261,26 @@ func (ly *Layer) InitActs() {
 	for i := range ly.NeuronVars {
 		ly.NeuronVars[i] = 0
 	}
+	for i := range ly.PrevAct {
+		ly.PrevAct[i] = 0
+	}
+}
+
+// savePrevAct saves the current Act values for given data-parallel index
+// di into PrevAct, for carryover into the next trial.
+func (ly *Layer) savePrevAct(di, nData int) {
+	nu := ly.Shape.Len()
+	if len(ly.PrevAct) < nData*nu {
+		ly.PrevAct = make([]float32, nData*nu)
+	}
+	viA := varIndexDef("Act")
+	for ui := range nu {
+		off := (di*nu + ui) * NeuronVarN
+		if off >= len(ly.NeuronVars) {
+			return
+		}
+		ly.PrevAct[di*nu+ui] = ly.NeuronVars[off+viA]
+	}
 }
 
 // InitExt initializes the external input and target values to NaN,
@@ -399,21 +423,33 @@ func (ly *Layer) readbackBias() {
 	}
 }
 
-// buildLayer builds the [gomlx] computation graph portion for this layer,
-// creating the weight variables and the Net / Act output nodes.
-// It is called from the [Network] build process, and requires that
-// the Act nodes of all sending layers have already been built.
+// buildLayer builds the [gomlx] computation graph portion for this layer
+// for one cycle, creating the weight variables (on the first cycle) and
+// the Net / Act output nodes. It is called from the [Network] build
+// process, and requires that the Act nodes of the senders of all
+// [Forward] paths have already been built for this cycle.
+// prev has the activity of each non-input layer at the end of the
+// previous cycle (nil on the first cycle), used for the recurrent
+// ([Back], [Lateral]) paths, and for Forward paths from layers that come
+// later in the layer order. first is true for the first cycle.
 // scope is the root model scope under which the path variables go.
-func (ly *Layer) buildLayer(scope *Scope, inputs []*graph.Node) error {
+func (ly *Layer) buildLayer(scope *Scope, prev map[*Layer]*graph.Node, first bool) error {
 	g := ly.inputGraph()
 	if g == nil {
 		return fmt.Errorf("Layer %s: cannot build -- no input graph found", ly.Name)
 	}
 	var net *graph.Node
 	for _, pt := range ly.RecvPaths {
-		ln, err := pt.buildDense(scope, g)
+		send := pt.Send.Act
+		if p, ok := prev[pt.Send]; ok && (pt.Params.Type.IsRecurrent() || pt.Send.Index >= ly.Index) {
+			send = p // previous cycle, nil (zero) on the first
+		}
+		ln, err := pt.buildDense(scope, g, send, first)
 		if err != nil {
 			return err
+		}
+		if ln == nil {
+			continue
 		}
 		if net == nil {
 			net = ln
@@ -424,8 +460,17 @@ func (ly *Layer) buildLayer(scope *Scope, inputs []*graph.Node) error {
 	if net == nil {
 		return fmt.Errorf("Layer %s: no receiving paths to build", ly.Name)
 	}
+	if ly.Params.Act.Noise > 0 {
+		noise := scope.RandomNormal(g, net.Shape())
+		net = graph.Add(net, graph.MulScalar(noise, ly.Params.Act.Noise))
+	}
 	ly.Net = net
-	ly.Act = applyAct(ly.Params.Act, net)
+	act := applyAct(ly.Params.Act, net)
+	if dr := ly.Params.Act.Dropout; dr > 0 && ly.Network != nil && ly.Network.buildingTrain {
+		keep := graph.GreaterThan(scope.RandomUniform(g, act.Shape()), graph.Scalar(g, act.DType(), dr))
+		act = graph.Where(keep, graph.DivScalar(act, 1-dr), graph.ZerosLike(act))
+	}
+	ly.Act = act
 	return nil
 }
 
@@ -436,7 +481,7 @@ func (ly *Layer) inputGraph() *graph.Graph {
 		return ly.Input.Graph()
 	}
 	for _, pt := range ly.RecvPaths {
-		if pt.Send != nil && pt.Send.Act != nil {
+		if pt.Send != nil && pt.Send.Act != nil && !pt.Params.Type.IsRecurrent() {
 			return pt.Send.Act.Graph()
 		}
 	}

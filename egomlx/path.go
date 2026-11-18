@@ -227,10 +227,13 @@ func (pt *Path) ParamsString(nonDefault bool) string {
 	return b.String()
 }
 
-// Defaults sets the default values for the path parameters.
+// Defaults sets the default values for the path parameters,
+// keeping the path type set by [Path.Connect].
 func (pt *Path) Defaults() {
 	pt.Params.Path = pt
+	typ := pt.Params.Type
 	pt.Params.Defaults()
+	pt.Params.Type = typ
 }
 
 // UpdateParams updates all parameters given any changes that might
@@ -432,12 +435,22 @@ func (pt *Path) SetWtValue(sidx, ridx int, val float32) error {
 }
 
 // buildDense builds the [gomlx] computation graph for the dense
-// transformation of this pathway, creating the [Kernel] and [Bias]
-// variables in a scope named for the path, and returning the
+// transformation of this pathway from the given sending activity node,
+// creating the [Kernel] and [Bias] variables in a scope named for the
+// path (or reusing them on later cycles), and returning the
 // linear (pre-activation) output node.
 // scope is the root model scope, and g is the graph to build on.
-func (pt *Path) buildDense(scope *Scope, g *graph.Graph) (*graph.Node, error) {
-	dscope := scope.In("%s", pt.Name).In("dense")
+// send is nil for a recurrent path on the first cycle, when the sender
+// has no activity yet: the output is then nil (no input, including no
+// bias). first is true on the first cycle, when the weights are read
+// back for display.
+func (pt *Path) buildDense(scope *Scope, g *graph.Graph, send *graph.Node, first bool) (*graph.Node, error) {
+	var dscope *Scope
+	if first {
+		dscope = scope.In("%s", pt.Name).In("dense")
+	} else { // later cycles reuse the same variables
+		dscope = scope.Shared("%s", pt.Name).In("dense")
+	}
 
 	nSend := pt.Send.Shape.Len()
 	nRecv := pt.Recv.Shape.Len()
@@ -452,12 +465,17 @@ func (pt *Path) buildDense(scope *Scope, g *graph.Graph) (*graph.Node, error) {
 	if pt.Params.UseBias {
 		bNode = pt.Bias.NodeValue(g)
 	}
-	if pt.Send.Act == nil {
-		return nil, fmt.Errorf("Path %s: sending layer %s has no activation node -- build it first", pt.Name, pt.Send.Name)
+	if first {
+		pt.allocBuffers()
+		pt.ReadbackWeights()
 	}
-	out := nn.Dense(pt.Send.Act, kNode, bNode, compute.DenseLayoutInputOutputs)
-	pt.allocBuffers()
-	pt.ReadbackWeights()
+	if send == nil {
+		if !pt.Params.Type.IsRecurrent() {
+			return nil, fmt.Errorf("Path %s: sending layer %s has no activation node -- build it first", pt.Name, pt.Send.Name)
+		}
+		return nil, nil // no input from this path on the first cycle
+	}
+	out := nn.Dense(send, kNode, bNode, compute.DenseLayoutInputOutputs)
 	return out, nil
 }
 

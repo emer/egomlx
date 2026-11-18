@@ -21,13 +21,26 @@ const (
 
 	// Forward is a standard forward pathway from a sending layer
 	// to a receiving layer, implemented as a dense (linear) transformation.
-	// This is the only path type in the current feedforward-only toolkit.
+	// It uses the sending layer's activity on the current cycle,
+	// so the sending layer must come before the receiving layer.
 	Forward PathTypes = iota
 
-	// Back is a top-down back-going projection pathway,
-	// for recurrent networks.
+	// Back is a top-down back-going projection pathway, for recurrent
+	// networks (see [NetworkParams.NCycles]). It uses the sending layer's
+	// activity from the previous cycle (zero on the first cycle).
 	Back
+
+	// Lateral is a pathway within a layer (or between layers at the same
+	// level), for recurrent networks (see [NetworkParams.NCycles]).
+	// It uses the sending layer's activity from the previous cycle
+	// (zero on the first cycle).
+	Lateral
 )
+
+// IsRecurrent returns true for the recurrent path types ([Back] and
+// [Lateral]), which use the sending layer's activity from the previous
+// cycle.
+func (pt PathTypes) IsRecurrent() bool { return pt == Back || pt == Lateral }
 
 // WtInits enumerates the types of weight initialization
 // distributions that can be applied to path weights.

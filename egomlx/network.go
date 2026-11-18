@@ -6,6 +6,7 @@ package egomlx
 
 import (
 	"fmt"
+	"slices"
 
 	"cogentcore.org/core/base/errors"
 	"cogentcore.org/core/math32"
@@ -150,6 +151,10 @@ type Network struct {
 	// targBuf is a scratch buffer for the current target values,
 	// of size MaxData * TargSize, for building the target tensors.
 	targBuf []float32 `display:"-"`
+
+	// buildingTrain is true while building the training graph, which
+	// enables dropout ([ActParams.Dropout]).
+	buildingTrain bool
 }
 
 // gradPath records which pathway variable a DWt gradient
@@ -388,10 +393,18 @@ func (nt *Network) Build() error {
 			continue
 		}
 		nt.OutputLayers = append(nt.OutputLayers, ly)
+		nFwd := 0
 		for _, pt := range ly.RecvPaths {
-			if pt.Send.Index >= pt.Recv.Index {
-				return errors.New(fmt.Sprintf("Network: path %s: sending layer %s must come before receiving layer %s in a feedforward network", pt.Name, pt.Send.Name, pt.Recv.Name))
+			if pt.Params.Type.IsRecurrent() {
+				continue
 			}
+			nFwd++
+			if pt.Send.Index >= pt.Recv.Index {
+				return errors.New(fmt.Sprintf("Network: path %s: sending layer %s must come before receiving layer %s for a Forward path (use a Back or Lateral path for recurrence)", pt.Name, pt.Send.Name, pt.Recv.Name))
+			}
+		}
+		if nFwd == 0 {
+			return errors.New(fmt.Sprintf("Network: layer %s has only recurrent receiving paths: it needs at least one Forward path", ly.Name))
 		}
 	}
 	if len(nt.InputLayers) == 0 {
@@ -475,8 +488,14 @@ func (nt *Network) preCompile() error {
 	for _, ly := range nt.InputLayers {
 		inShapes = append(inShapes, shapes.Make(dtypes.Float32, nt.MaxData, ly.Shape.Len()))
 	}
+	var carryShapes []shapes.Shape
+	if nt.Params.Carryover() {
+		for _, ly := range nt.OutputLayers {
+			carryShapes = append(carryShapes, shapes.Make(dtypes.Float32, nt.MaxData, ly.Shape.Len()))
+		}
+	}
 	if nt.Exec != nil {
-		if _, err := nt.Exec.Compile(inShapes...); err != nil {
+		if _, err := nt.Exec.Compile(append(slices.Clone(inShapes), carryShapes...)...); err != nil {
 			return fmt.Errorf("Network %s: preCompile: %w", nt.Name, err)
 		}
 	}
@@ -488,6 +507,7 @@ func (nt *Network) preCompile() error {
 	for _, ly := range nt.TargetLayers {
 		trainShapes = append(trainShapes, shapes.Make(dtypes.Float32, nt.MaxData, ly.Shape.Len()))
 	}
+	trainShapes = append(trainShapes, carryShapes...)
 	if nt.TrainExec != nil {
 		if _, err := nt.TrainExec.Compile(trainShapes...); err != nil {
 			return fmt.Errorf("Network %s: preCompile: train: %w", nt.Name, err)
@@ -539,9 +559,24 @@ func (nt *Network) buildTrainGraph() error {
 // potentially for each different input shape (NData).
 // Weight variables are created on first build, and reused
 // (with their current values) for subsequent builds.
+//
+// With [NetworkParams.NCycles] > 1, the layers are updated for NCycles
+// cycles of recurrent settling, with the weights shared across cycles
+// (see [NetworkParams.NCycles] and [PathTypes]). The Net and Act nodes
+// are those of the final cycle.
+//
+// With carryover ([NetworkParams.Carryover]), inputs has one more node
+// for each non-input layer after those for the input layers: its final
+// activity on the previous trial, which (times 1 - Decay) is the starting
+// activity for the first cycle.
 func (nt *Network) buildModelFn(scope *model.Scope, g *graph.Graph, inputs []*graph.Node) []*graph.Node {
+	nIn := len(nt.InputLayers)
+	var carry []*graph.Node
+	if nt.Params.Carryover() && len(inputs) >= nIn+len(nt.OutputLayers) {
+		carry = inputs[nIn : nIn+len(nt.OutputLayers)]
+	}
+	inputs = inputs[:nIn]
 	ii := 0
-	var outs []*graph.Node
 	for _, ly := range nt.Layers {
 		if len(ly.RecvPaths) == 0 { // input layer
 			if ii >= len(inputs) {
@@ -553,10 +588,30 @@ func (nt *Network) buildModelFn(scope *model.Scope, g *graph.Graph, inputs []*gr
 			ii++
 			continue
 		}
-		err := ly.buildLayer(scope, inputs)
-		if err != nil {
-			panic(err)
+		ly.Act = nil
+	}
+	ncyc := max(nt.Params.NCycles, 1)
+	prev := make(map[*Layer]*graph.Node) // activity at the end of the previous cycle
+	for cyc := range ncyc {
+		for li, ly := range nt.OutputLayers {
+			switch {
+			case cyc > 0:
+				prev[ly] = ly.Act
+			case carry != nil:
+				prev[ly] = graph.MulScalar(carry[li], 1-nt.Params.Decay)
+			default:
+				prev[ly] = nil
+			}
 		}
+		for _, ly := range nt.OutputLayers {
+			err := ly.buildLayer(scope, prev, cyc == 0)
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	var outs []*graph.Node
+	for _, ly := range nt.OutputLayers {
 		outs = append(outs, ly.Net, ly.Act)
 	}
 	return outs
@@ -605,16 +660,43 @@ func (nt *Network) InitExt() {
 // forward pass.
 // This should be called after all [ApplyExt] calls for the
 // current trial have been made.
+//
+// With carryover ([NetworkParams.Carryover]), the Act values of the
+// non-input layers are first saved in PrevAct, as the starting point
+// for the next forward pass.
 func (nt *Network) ApplyExts() {
+	carry := nt.Params.Carryover()
 	for di := range nt.NData {
 		for _, ly := range nt.Layers {
 			if len(ly.RecvPaths) == 0 {
 				ly.applyInputValues(di)
 				continue
 			}
+			if carry {
+				ly.savePrevAct(di, nt.NData)
+			}
 			ly.zeroActValues(di)
 		}
 	}
+}
+
+// carryArgs returns the PrevAct values of the non-input layers as
+// [NData, NUnits] tensors, for carryover, or nil if not using carryover.
+func (nt *Network) carryArgs() []any {
+	if !nt.Params.Carryover() {
+		return nil
+	}
+	var args []any
+	for _, ly := range nt.OutputLayers {
+		nu := ly.Shape.Len()
+		if len(ly.PrevAct) < nt.NData*nu {
+			ly.PrevAct = make([]float32, nt.MaxData*nu)
+		}
+		buf := make([]float32, nt.NData*nu)
+		copy(buf, ly.PrevAct[:nt.NData*nu])
+		args = append(args, tensors.FromFlatDataAndDimensions(buf, nt.NData, nu))
+	}
+	return args
 }
 
 // gatherUnitVar gathers the values of the given unit variable name
@@ -695,6 +777,7 @@ func (nt *Network) Forward() error {
 	if err != nil {
 		return errors.Log(fmt.Errorf("Network: Forward: %w", err))
 	}
+	args = append(args, nt.carryArgs()...)
 	outs, err := nt.Exec.Call(args...)
 	if err != nil {
 		return errors.Log(fmt.Errorf("Network: Forward: %w", err))
@@ -792,8 +875,14 @@ func (nt *Network) buildTrainFn(scope *model.Scope, g *graph.Graph, inputs []*gr
 	if nIn+nTarg > len(inputs) {
 		panic(fmt.Sprintf("buildTrainFn: expected %d inputs (%d layers + %d targets), got %d", nIn+nTarg, nIn, nTarg, len(inputs)))
 	}
-	nt.buildModelFn(scope, g, inputs[:nIn])
-	loss := nt.buildLoss(g, inputs[nIn:])
+	modelIns := inputs[:nIn]
+	if nt.Params.Carryover() {
+		modelIns = append(slices.Clone(modelIns), inputs[nIn+nTarg:]...)
+	}
+	nt.buildingTrain = true
+	nt.buildModelFn(scope, g, modelIns)
+	nt.buildingTrain = false
+	loss := nt.buildLoss(g, inputs[nIn:nIn+nTarg])
 
 	opt := nt.Params.Optimizer()
 	reach := nt.targetReachable()
@@ -879,6 +968,7 @@ func (nt *Network) Backward(updtDWt ...DWtTypes) error {
 		return errors.Log(fmt.Errorf("Network: Backward: %w", err))
 	}
 	args := append(inArgs, tArgs...)
+	args = append(args, nt.carryArgs()...)
 	ex := nt.TrainExec
 	if dwts == DWtReadRaw && nt.TrainVisExec != nil {
 		ex = nt.TrainVisExec

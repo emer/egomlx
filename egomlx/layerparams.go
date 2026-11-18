@@ -46,6 +46,8 @@ type LayerParams struct {
 func (lp *LayerParams) Defaults() {
 	lp.Act.Fn = ReLU
 	lp.Act.LeakySlope = 0.01
+	lp.Act.Noise = 0
+	lp.Act.Dropout = 0
 }
 
 // Update is called when a parameter is changed to update any

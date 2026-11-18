@@ -128,7 +128,31 @@ type NetworkParams struct {
 	// anywhere the update is NaN or +/-Inf, which can keep training
 	// alive through transient instabilities.
 	ClipNaN bool `default:"false"`
+
+	// NCycles is the number of cycles of recurrent settling in each
+	// forward pass. On each cycle, every non-input layer is updated from
+	// the current-cycle activity of the senders of its [Forward] paths, and
+	// the previous-cycle activity of the senders of its recurrent ([Back]
+	// and [Lateral]) paths, which is zero on the first cycle. The weights
+	// are shared across cycles, and the loss is computed on the final
+	// cycle, so learning is backpropagation through time. 1 = a standard
+	// feedforward pass (recurrent paths then only contribute their bias).
+	NCycles int `default:"1" min:"1"`
+
+	// Decay is the proportion of the final activity of each non-input layer
+	// on the previous trial that decays before the next trial, when
+	// NCycles > 1: the first cycle of the next trial starts from
+	// (1 - Decay) times that activity, instead of from zero, so that the
+	// previous trial carries over through the recurrent paths. 1 = no
+	// carryover. Gradients do not flow back into the previous trial.
+	// The activity is carried over in [Network.ApplyExts], within each
+	// data-parallel stream.
+	Decay float64 `default:"1" min:"0" max:"1"`
 }
+
+// Carryover returns true if the previous trial's activity carries over
+// into the next trial: NCycles > 1 and Decay < 1.
+func (np *NetworkParams) Carryover() bool { return np.NCycles > 1 && np.Decay < 1 }
 
 // Defaults sets default values for the NetworkParams.
 func (np *NetworkParams) Defaults() {
@@ -142,6 +166,8 @@ func (np *NetworkParams) Defaults() {
 	np.WeightDecay = 0
 	np.ClipStepByValue = 0
 	np.ClipNaN = false
+	np.NCycles = 1
+	np.Decay = 1
 	np.Update()
 }
 
