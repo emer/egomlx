@@ -132,6 +132,14 @@ type Network struct {
 	// the graph outputs, of the Net and Act values.
 	OutputLayers []*Layer `display:"-"`
 
+	// RecordCycles makes [Forward] also read back the Act values of
+	// every non-input layer on every cycle of recurrent settling
+	// ([NetworkParams.NCycles]), into [Layer.CycleActs], for analyzing
+	// the settling dynamics. It has the cost of the extra readback.
+	// It must be set before [Build], or followed by [UpdateParams]
+	// (the graph outputs are fixed when it is compiled).
+	RecordCycles bool
+
 	// TargetLayers are the [Target] type layers, in order, among the
 	// OutputLayers -- their Targ values are additional inputs to the
 	// training graph, driving the loss for the backward pass.
@@ -608,6 +616,10 @@ func (nt *Network) buildModelFn(scope *model.Scope, g *graph.Graph, inputs []*gr
 	}
 	ncyc := max(nt.Params.NCycles, 1)
 	prev := make(map[*Layer]*graph.Node) // activity at the end of the previous cycle
+	var cycActs [][]*graph.Node          // [layer][cycle], for RecordCycles
+	if nt.RecordCycles {
+		cycActs = make([][]*graph.Node, len(nt.OutputLayers))
+	}
 	for cyc := range ncyc {
 		for li, ly := range nt.OutputLayers {
 			switch {
@@ -625,10 +637,18 @@ func (nt *Network) buildModelFn(scope *model.Scope, g *graph.Graph, inputs []*gr
 				panic(err)
 			}
 		}
+		for li, ly := range nt.OutputLayers {
+			if cycActs != nil {
+				cycActs[li] = append(cycActs[li], ly.Act)
+			}
+		}
 	}
 	var outs []*graph.Node
 	for _, ly := range nt.OutputLayers {
 		outs = append(outs, ly.Net, ly.Act)
+	}
+	for _, acts := range cycActs { // [NCycles, NData, NUnits]
+		outs = append(outs, graph.Stack(acts, 0))
 	}
 	return outs
 }
@@ -802,6 +822,14 @@ func (nt *Network) Forward() error {
 	}
 	for li, ly := range nt.OutputLayers {
 		ly.readbackAct(outs[2*li : 2*li+2])
+	}
+	if nt.RecordCycles {
+		nOut := 2 * len(nt.OutputLayers)
+		for li, ly := range nt.OutputLayers {
+			if nOut+li < len(outs) {
+				ly.CycleActs = tensors.MustCopyFlatData[float32](outs[nOut+li])
+			}
+		}
 	}
 	nt.ForwardTimer.Stop()
 	for _, ly := range nt.OutputLayers {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	"cogentcore.org/lab/tensor"
 	"github.com/emer/emergent/v2/paths"
 )
 
@@ -223,5 +224,69 @@ func TestDropout(t *testing.T) {
 	t.Logf("dropout loss: %.4f -> %.4f", first, net.Loss)
 	if !(net.Loss < 0.5*first) {
 		t.Errorf("did not learn with dropout: %g -> %g", first, net.Loss)
+	}
+}
+
+// TestRecordCycles checks that with RecordCycles, Forward reads back the
+// Act of every non-input layer on every cycle, that the last cycle is
+// the final Act, and that the activity changes over the cycles.
+func TestRecordCycles(t *testing.T) {
+	nData, ncyc := 3, 6
+	net := NewNetwork("TestRecordCycles")
+	net.SetMaxData(nData)
+	inp := net.AddLayer2D("Input", Input, 5, 5)
+	hid := net.AddLayer2D("Hidden", Hidden, 8, 8)
+	out := net.AddLayer2D("Output", Target, 5, 5)
+	full := paths.NewFull()
+	net.ConnectLayers(inp, hid, full, Forward)
+	net.ConnectLayers(hid, out, full, Forward)
+	net.ConnectLayers(out, hid, full, Back)
+	net.Defaults()
+	net.Params.NCycles = ncyc
+	out.Params.Act.Fn = Sigmoid
+	net.RecordCycles = true
+	if err := net.Build(); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	net.InitWeights()
+	net.SetNData(nData)
+	rnd := rand.New(rand.NewPCG(3, 4))
+	net.InitExt()
+	for di := range nData {
+		pat := tensor.New[float32](25)
+		for i := range pat.Len() {
+			if rnd.Float32() < 0.3 {
+				pat.SetFloat1D(1, i)
+			}
+		}
+		inp.ApplyExt(di, pat)
+	}
+	net.ApplyExts()
+	if err := net.Forward(); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	vi := varIndexDef("Act")
+	for _, ly := range []*Layer{hid, out} {
+		nu := ly.Shape.Len()
+		if len(ly.CycleActs) != ncyc*nData*nu {
+			t.Fatalf("%s: CycleActs len %d, want %d", ly.Name, len(ly.CycleActs), ncyc*nData*nu)
+		}
+		for di := range nData {
+			last := ly.CycleAct(ncyc-1, di, nil)
+			for ui := range nu {
+				if last[ui] != ly.UnitValue1D(vi, ui, di) {
+					t.Fatalf("%s di %d: last cycle Act != final Act", ly.Name, di)
+				}
+			}
+		}
+		if slices.Equal(ly.CycleAct(0, 0, nil), ly.CycleAct(ncyc-1, 0, nil)) {
+			t.Errorf("%s: Act does not change over the cycles", ly.Name)
+		}
+	}
+	if ly := inp; ly.CycleAct(0, 0, nil) != nil {
+		t.Errorf("input layer should have no CycleActs")
+	}
+	if hid.CycleAct(ncyc, 0, nil) != nil || hid.CycleAct(0, nData, nil) != nil {
+		t.Errorf("out of range CycleAct should be nil")
 	}
 }

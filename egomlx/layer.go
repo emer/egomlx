@@ -58,6 +58,12 @@ type Layer struct {
 	// saved in [Network.ApplyExts], for carryover ([NetworkParams.Decay]).
 	PrevAct []float32 `display:"-"`
 
+	// CycleActs has the Act values of this (non-input) layer on every
+	// cycle of recurrent settling in the last [Network.Forward], in
+	// [NCycles][NData][NUnits] order, if [Network.RecordCycles] is set
+	// (see [Layer.CycleAct]).
+	CycleActs []float32 `display:"-"`
+
 	// Input is the graph input node for an input layer -- the
 	// runtime values of the layer's Act, with no transformation.
 	// Nil for non-input layers.
@@ -659,4 +665,23 @@ func (ly *Layer) setBiasValues(vals []float32) {
 		return
 	}
 	ly.readbackBias()
+}
+
+// CycleAct returns the Act values of the layer on the given cycle of
+// settling (0-based) of the last [Network.Forward], for data-parallel
+// index di, from [Layer.CycleActs] (with [Network.RecordCycles]), using
+// vals as the buffer if it has the right size. It returns nil if the
+// cycle values are not available.
+func (ly *Layer) CycleAct(cyc, di int, vals []float32) []float32 {
+	nData := ly.Network.NData
+	nu := ly.Shape.Len()
+	st := (cyc*nData + di) * nu
+	if cyc < 0 || di < 0 || di >= nData || st+nu > len(ly.CycleActs) {
+		return nil
+	}
+	if len(vals) != nu {
+		vals = make([]float32, nu)
+	}
+	copy(vals, ly.CycleActs[st:st+nu])
+	return vals
 }

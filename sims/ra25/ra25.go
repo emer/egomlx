@@ -44,7 +44,9 @@ import (
 	"github.com/emer/emergent/v2/egui"
 	"github.com/emer/emergent/v2/env"
 	"github.com/emer/emergent/v2/looper"
+	"github.com/emer/emergent/v2/netview"
 	"github.com/emer/emergent/v2/paths"
+	"github.com/gomlx/gomlx/ml/model"
 )
 
 //go:embed random_5x5_25.tsv
@@ -151,7 +153,7 @@ func (ss *Sim) ConfigSim() {
 	ss.Root, _ = tensorfs.NewDir("Root")
 	tensorfs.CurRoot = ss.Root
 	ss.Net = egomlx.NewNetwork(ss.Config.Name)
-	ss.Params.Config(NetworkParams, LayerParams, PathParams, ss.Config.Params.Sheet, ss.Config.Params.Tag, "github.com/emer/egomlx/sims/ra25", reflect.ValueOf(ss))
+	ss.configParams()
 	ss.RandSeeds.Init(100) // max 100 runs
 	ss.InitRandSeed(0)
 	// ss.ConfigInputs()
@@ -167,18 +169,62 @@ func (ss *Sim) ConfigSim() {
 	}
 }
 
-// ConfigEnv configures the train and test environments,
-// using the embedded 25 random input / output patterns.
-func (ss *Sim) ConfigEnv() {
-	// Can be called multiple times -- don't re-create
-	var trn, tst *env.FixedTable
-	if len(ss.Envs) == 0 {
-		trn = &env.FixedTable{}
-		tst = &env.FixedTable{}
-	} else {
-		trn = ss.Envs.ByMode(Train).(*env.FixedTable)
-		tst = ss.Envs.ByMode(Test).(*env.FixedTable)
+func (ss *Sim) configParams() {
+	ss.Params.Config(NetworkParams, LayerParams, PathParams, ss.Config.Params.Sheet, ss.Config.Params.Tag, "github.com/emer/egomlx/sims/ra25", reflect.ValueOf(ss))
+}
+
+// ReConfig applies the current Config to the sim, as the Config button
+// does: it makes new environments, rebuilds the network (with new
+// weights), loops, and stats (deleting all the data in Root, so all
+// stats data is reset), and then calls Init.
+// The egomlx Network has no DeleteAll, so a new Network is made,
+// after releasing the compiled graphs and compute backend of the
+// old one (see [releaseNet]).
+// Config.GUI cannot be changed this way.
+func (ss *Sim) ReConfig() {
+	errors.Log(ss.Root.DeleteAll())
+	ss.configParams()
+	ss.OpenInputs()
+	ss.ConfigEnv()
+	releaseNet(ss.Net)
+	ss.Net = egomlx.NewNetwork(ss.Config.Name)
+	ss.ConfigNet(ss.Net)
+	ss.ConfigLoops()
+	ss.ConfigStats()
+	if ss.GUI.Active {
+		ss.configNetView(ss.GUI.NetViews[0])
+		ss.GUI.UpdateFiles()
 	}
+	ss.Init()
+	if ss.GUI.Active {
+		ss.GUI.Toolbar.Update() // the looper controls show the loops' step settings
+		ss.GUI.UpdateWindow()
+	}
+}
+
+// releaseNet releases the gomlx resources of the given network that
+// is no longer used: its compiled graph executors and compute backend.
+func releaseNet(net *egomlx.Network) {
+	if net == nil {
+		return
+	}
+	for _, ex := range []*model.Exec{net.Exec, net.TrainExec, net.TrainVisExec} {
+		if ex != nil {
+			ex.Finalize()
+		}
+	}
+	if net.Backend != nil && !net.Backend.IsFinalized() {
+		net.Backend.Finalize()
+	}
+}
+
+// ConfigEnv makes new train and test environments, replacing any
+// existing ones (see [Sim.ReConfig]), using the embedded 25 random
+// input / output patterns.
+func (ss *Sim) ConfigEnv() {
+	ss.Envs = env.Envs{}
+	trn := &env.FixedTable{}
+	tst := &env.FixedTable{}
 
 	inputs := tensorfs.DirTable(ss.Root.Dir("Inputs/Train"), nil)
 
@@ -266,8 +312,11 @@ func (ss *Sim) NetViewUpdater(mode enums.Enum) *egomlx.NetViewUpdate {
 }
 
 // ConfigLoops configures the control loops: Training, Testing
+// When called again (see [Sim.ReConfig]), it recycles the existing
+// ss.Loops, keeping the step settings of the GUI.
 func (ss *Sim) ConfigLoops() {
-	ls := looper.NewStacks()
+	ls, prev := looper.RecycleStacks(ss.Loops)
+	ss.Loops = ls
 
 	trials := int(math32.IntMultipleGE(float32(ss.Config.Run.Trials), float32(ss.Config.Run.NData)))
 	cycles := ss.Config.Run.Cycles
@@ -342,7 +391,7 @@ func (ss *Sim) ConfigLoops() {
 	if ss.Config.Debug {
 		mpi.Println(ls.DocString())
 	}
-	ss.Loops = ls
+	ls.CopyStepSettings(prev)
 }
 
 // ApplyInputs applies input patterns from given environment for given mode,
@@ -533,6 +582,7 @@ func (ss *Sim) StatsInit() {
 // The output error is live -- Err tracks the network's current output
 // error, and falls as the network learns.
 func (ss *Sim) ConfigStats() {
+	ss.StatFuncs = nil
 	ss.Stats = ss.Root.Dir("Stats")
 	ss.Current = ss.Stats.Dir("Current")
 
@@ -674,11 +724,7 @@ func (ss *Sim) ConfigGUI(b tree.Node) {
 	ss.GUI.MakeBody(b, ss, ss.Root, ss.Config.Name, ss.Config.Title, ss.Config.Doc)
 	ss.GUI.StopLevel = Trial
 	nv := ss.GUI.AddNetView("Network")
-	nv.Settings.MaxRecs = 2 * ss.Config.Run.Cycles
-	nv.Settings.Raster.Max = ss.Config.Run.Cycles
-	nv.SetNet(ss.Net)
-	ss.TrainUpdate.Config(nv, egomlx.Trial, ss.StatCounters)
-	ss.TestUpdate.Config(nv, egomlx.Trial, ss.StatCounters)
+	ss.configNetView(nv)
 	ss.GUI.OnStop = func(mode, level enums.Enum) {
 		vu := ss.NetViewUpdater(mode)
 		vu.UpdateWhenStopped(mode, level)
@@ -691,11 +737,29 @@ func (ss *Sim) ConfigGUI(b tree.Node) {
 	ss.GUI.FinalizeGUI(false)
 }
 
+// configNetView configures the network view for the current network.
+func (ss *Sim) configNetView(nv *netview.NetView) {
+	nv.Settings.MaxRecs = 2 * ss.Config.Run.Cycles
+	nv.Settings.Raster.Max = ss.Config.Run.Cycles
+	nv.SetNet(ss.Net)
+	ss.TrainUpdate.Config(nv, egomlx.Trial, ss.StatCounters)
+	ss.TestUpdate.Config(nv, egomlx.Trial, ss.StatCounters)
+}
+
 // MakeToolbar makes the custom toolbar items.
 func (ss *Sim) MakeToolbar(p *tree.Plan) {
 	ss.GUI.AddLooperCtrl(p, ss.Loops)
 
 	tree.Add(p, func(w *core.Separator) {})
+	ss.GUI.AddToolbarItem(p, egui.ToolbarItem{
+		Label:   "Config",
+		Icon:    icons.Settings,
+		Tooltip: "Applies the current Config settings: makes new environments, rebuilds the network (with new weights), loops, and stats (resetting all stats data), and then does Init. GPU and GUI cannot be changed.",
+		Active:  egui.ActiveStopped,
+		Func: func() {
+			ss.ReConfig()
+		},
+	})
 	ss.GUI.AddToolbarItem(p, egui.ToolbarItem{
 		Label:   "New Seed",
 		Icon:    icons.Add,

@@ -30,6 +30,7 @@ Or directly with go:
 The basic interface has a toolbar across the top, a set of `Sim` fields on the left, and a tab bar with the network view (and other windows) on the right. The toolbar actions all have tooltips so just hover over those to see what they do.
 
 * `Init` re-initializes the run with the same random seed (the `New Seed` toolbar item generates a new one).
+* `Config` applies changes made to the `Config` settings (e.g., the hidden layer sizes or `NData`) without restarting: it rebuilds the environments, network (with new weights), loops, and stats, and then does Init (`GUI` cannot be changed this way).
 * `Train` runs the training loops; `Stop` and `Step` control the run at the trial level.
 * The `Network` tab shows the [netview](https://github.com/emer/emergent/wiki/NetView) visualization of the model: the four layers, their units, and the dense pathways. The bottom of the view shows the current loop counters, data-parallel index, trial name, and the live output error.
 * You can click on units, pathways, and layers to inspect and edit their values and parameters, and to view them in the rasters and 3D scene.

@@ -3,10 +3,10 @@ module github.com/emer/egomlx
 go 1.27.0
 
 require (
-	cogentcore.org/core v0.5.44
-	cogentcore.org/lab v0.2.21
+	cogentcore.org/core v0.5.48
+	cogentcore.org/lab v0.2.23
 	github.com/cogentcore/yaegi v0.0.0-20260116172027-700fbf8949f3
-	github.com/emer/emergent/v2 v2.0.5
+	github.com/emer/emergent/v2 v2.0.6
 	github.com/gomlx/compute v0.1.28
 	github.com/gomlx/gomlx v0.28.34
 )
