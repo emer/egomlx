@@ -25,8 +25,18 @@ type ActParams struct {
 	// Dropout is the probability of setting each unit's activity to zero,
 	// on each cycle of the training passes only (Backward), with the other
 	// activities scaled by 1 / (1 - Dropout) to keep the mean the same.
-	// It has no effect on Forward (testing) passes. 0 = no dropout.
+	// It has no effect on Forward (testing) passes (see TestDropout).
+	// 0 = no dropout.
 	Dropout float64 `default:"0" min:"0" max:"1"`
+
+	// TestDropout is the probability of setting each unit's activity to
+	// zero on each cycle of the Forward (testing) passes, with the other
+	// activities scaled by 1 / (1 - TestDropout), as Dropout does in
+	// training. A new random pattern is used on every pass, so the same
+	// input can give different outputs, as with Noise. It is independent
+	// of Dropout, so a network can be tested with a different amount of
+	// dropout than it was trained with (or with none). 0 = no dropout.
+	TestDropout float64 `default:"0" min:"0" max:"1"`
 }
 
 // ActFuns enumerates the activation functions that can be applied

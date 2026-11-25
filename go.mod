@@ -3,10 +3,10 @@ module github.com/emer/egomlx
 go 1.27.0
 
 require (
-	cogentcore.org/core v0.5.50
-	cogentcore.org/lab v0.2.25
+	cogentcore.org/core v0.5.53
+	cogentcore.org/lab v0.2.28
 	github.com/cogentcore/yaegi v0.0.0-20260116172027-700fbf8949f3
-	github.com/emer/emergent/v2 v2.0.7
+	github.com/emer/emergent/v2 v2.0.8
 	github.com/gomlx/compute v0.1.28
 	github.com/gomlx/gomlx v0.28.34
 )
@@ -29,11 +29,11 @@ require (
 	github.com/chewxy/math32 v1.11.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/cogentcore/glfw4/v3.4/glfw v0.1.0-pre.2.0.20261121165724-248ae4b326b2 // indirect
 	github.com/cogentcore/typesetting v0.0.0-20261022123550-2cd93a91580e // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dlclark/regexp2/v2 v2.7.1 // indirect
 	github.com/faiface/beep v1.1.0 // indirect
-	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.1.0.20260628091122-0bd588dc30cf // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect

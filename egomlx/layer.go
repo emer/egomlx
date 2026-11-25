@@ -472,7 +472,11 @@ func (ly *Layer) buildLayer(scope *Scope, prev map[*Layer]*graph.Node, first boo
 	}
 	ly.Net = net
 	act := applyAct(ly.Params.Act, net)
-	if dr := ly.Params.Act.Dropout; dr > 0 && ly.Network != nil && ly.Network.buildingTrain {
+	dr := ly.Params.Act.TestDropout
+	if ly.Network != nil && ly.Network.buildingTrain {
+		dr = ly.Params.Act.Dropout
+	}
+	if dr > 0 && ly.Network != nil {
 		keep := graph.GreaterThan(scope.RandomUniform(g, act.Shape()), graph.Scalar(g, act.DType(), dr))
 		act = graph.Where(keep, graph.DivScalar(act, 1-dr), graph.ZerosLike(act))
 	}

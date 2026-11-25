@@ -227,6 +227,42 @@ func TestDropout(t *testing.T) {
 	}
 }
 
+// TestTestDropout checks that TestDropout gives a different output on
+// each Forward (testing) pass with the same input, and has no effect on
+// the training pass, unlike Dropout.
+func TestTestDropout(t *testing.T) {
+	nData := 4
+	net := testRANet(t, "TestTestDropout", nData)
+	for _, ly := range net.Layers {
+		for _, pt := range ly.RecvPaths {
+			pt.Params.Learn = false
+		}
+	}
+	net.UpdateParams()
+	applyRandomBatch(t, net, rand.New(rand.NewPCG(5, 6)), nData)
+	net.Forward()
+	a := outActs(net)
+	net.Backward()
+	l0 := net.Loss
+	for _, ly := range net.Layers {
+		if ly.Type == Hidden {
+			ly.Params.Act.TestDropout = 0.5
+		}
+	}
+	net.UpdateParams()
+	net.Forward()
+	b := outActs(net)
+	net.Forward()
+	c := outActs(net)
+	if slices.Equal(a, b) || slices.Equal(b, c) {
+		t.Errorf("TestDropout did not change the Forward output on each pass")
+	}
+	net.Backward()
+	if net.Loss != l0 {
+		t.Errorf("TestDropout changed the training pass: loss %g, without %g", net.Loss, l0)
+	}
+}
+
 // TestRecordCycles checks that with RecordCycles, Forward reads back the
 // Act of every non-input layer on every cycle, that the last cycle is
 // the final Act, and that the activity changes over the cycles.
