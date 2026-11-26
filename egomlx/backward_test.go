@@ -5,12 +5,15 @@
 package egomlx
 
 import (
+	"math"
 	"math/rand/v2"
+	"strings"
 	"testing"
 
 	"cogentcore.org/core/math32"
 	"cogentcore.org/lab/tensor"
 	"github.com/emer/emergent/v2/paths"
+	"github.com/gomlx/gomlx/core/tensors"
 )
 
 // testRANet builds a small ra25-style feedforward network with a
@@ -255,5 +258,78 @@ func TestBackwardNoTargs(t *testing.T) {
 		t.Errorf("Backward should return error when targets are not applied")
 	} else {
 		t.Logf("expected error: %v", err)
+	}
+}
+
+// TestInitWeightsResetsOptimizer checks that InitWeights resets the
+// optimizer state (the step counts and the Adam moments), so that a
+// new run does not start from the moments of the previous one: in
+// particular, NaN moments from a run that diverged must not make the
+// next run NaN.
+func TestInitWeightsResetsOptimizer(t *testing.T) {
+	net := testRANet(t, "TestResetOptim", 4)
+	net.Params.Optim = Adam
+	net.Params.LRate = 0.01
+	net.UpdateParams()
+	rnd := rand.New(rand.NewPCG(7, 8))
+	for range 5 {
+		applyRandomBatch(t, net, rnd, 4)
+		if err := net.Backward(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if net.GlobalStep() == 0 {
+		t.Fatalf("global step not incremented")
+	}
+	// poison all the Adam moments, as in a run that diverged
+	n := 0
+	for v := range net.Store.IterVariables() {
+		if strings.HasPrefix(v.Scope(), "/AdamOptimizer/") {
+			nan := make([]float32, v.Shape().Size())
+			for i := range nan {
+				nan[i] = float32(math.NaN())
+			}
+			v.MustSetValue(tensors.FromFlatDataAndDimensions(nan, v.Shape().Dimensions...))
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatalf("no Adam moment variables found")
+	}
+	net.InitWeights()
+	if s := net.GlobalStep(); s != 0 {
+		t.Errorf("global step after InitWeights = %d, want 0", s)
+	}
+	for v := range net.Store.IterVariables() {
+		sc := v.Scope()
+		if sc != "/AdamOptimizer" && !strings.HasPrefix(sc, "/AdamOptimizer/") {
+			continue
+		}
+		vals := v.MustValue().Value()
+		switch x := vals.(type) {
+		case float32:
+			if x != 0 {
+				t.Errorf("%s/%s = %g after InitWeights, want 0", sc, v.Name(), x)
+			}
+		default:
+			if s := sumAbs(tensors.MustCopyFlatData[float32](v.MustValue())); s != 0 || math.IsNaN(s) {
+				t.Errorf("%s/%s: sum abs %g after InitWeights, want 0", sc, v.Name(), s)
+			}
+		}
+	}
+	applyRandomBatch(t, net, rnd, 4)
+	if err := net.Backward(); err != nil {
+		t.Fatal(err)
+	}
+	if math32.IsNaN(net.Loss) {
+		t.Errorf("loss is NaN after InitWeights")
+	}
+	net.ReadWeights()
+	for _, ly := range net.Layers {
+		for _, pt := range ly.RecvPaths {
+			if s := sumAbs(pt.KernelVals); math.IsNaN(s) {
+				t.Errorf("%s weights are NaN after InitWeights and Backward", pt.Name)
+			}
+		}
 	}
 }

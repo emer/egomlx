@@ -10,6 +10,7 @@ import (
 	"cogentcore.org/core/base/timer"
 	"fmt"
 	"slices"
+	"strings"
 
 	"cogentcore.org/core/base/errors"
 	"cogentcore.org/core/math32"
@@ -671,6 +672,33 @@ func (nt *Network) InitWeights() {
 		}
 	}
 	nt.ReadWeights()
+	errors.Log(nt.ResetOptimizer())
+}
+
+// ResetOptimizer resets the state of the optimizer to its initial
+// values: the global step count, and the step count and gradient
+// moments of Adam (and its variants) are set to 0. It is called by
+// [Network.InitWeights], so that each new run starts the optimizer
+// fresh: otherwise the moments of the previous run would carry over,
+// including any NaN values from a run that diverged, which would make
+// all the following runs NaN from their start.
+func (nt *Network) ResetOptimizer() error {
+	if nt.Store == nil {
+		return nil
+	}
+	adam := "/" + optimizer.AdamDefaultScope
+	var errs []error
+	for v := range nt.Store.IterVariables() {
+		sc := v.Scope()
+		isStep := v.Name() == optimizer.GlobalStepVariableName && strings.Trim(sc, "/") == ""
+		if !isStep && sc != adam && !strings.HasPrefix(sc, adam+"/") {
+			continue
+		}
+		if err := v.SetValue(tensors.FromShape(v.Shape())); err != nil {
+			errs = append(errs, fmt.Errorf("Network %s: ResetOptimizer: %s/%s: %w", nt.Name, sc, v.Name(), err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // InitActs initializes all activation state values to zero,
