@@ -7,6 +7,7 @@ package egomlx
 import (
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"cogentcore.org/core/base/errors"
@@ -466,15 +467,17 @@ func (ly *Layer) buildLayer(scope *Scope, prev map[*Layer]*graph.Node, first boo
 	if net == nil {
 		return fmt.Errorf("Layer %s: no receiving paths to build", ly.Name)
 	}
-	if ly.Params.Act.Noise > 0 {
+	if sd := ly.noiseSD(); sd > 0 {
 		noise := scope.RandomNormal(g, net.Shape())
-		net = graph.Add(net, graph.MulScalar(noise, ly.Params.Act.Noise))
+		net = graph.Add(net, graph.MulScalar(noise, sd))
 	}
 	ly.Net = net
 	act := applyAct(ly.Params.Act, net)
 	dr := ly.Params.Act.TestDropout
 	if ly.Network != nil && ly.Network.buildingTrain {
 		dr = ly.Params.Act.Dropout
+	} else if ly.Network != nil && ly.Network.buildingTrainFwd {
+		dr = 0
 	}
 	if dr > 0 && ly.Network != nil {
 		keep := graph.GreaterThan(scope.RandomUniform(g, act.Shape()), graph.Scalar(g, act.DType(), dr))
@@ -482,6 +485,18 @@ func (ly *Layer) buildLayer(scope *Scope, prev map[*Layer]*graph.Node, first boo
 	}
 	ly.Act = act
 	return nil
+}
+
+// noiseSD returns the standard deviation of the noise added to the net
+// input: Noise in training (the training graph and the forward pass of
+// the training trials), and Noise combined with TestNoise (independent
+// noise) in the Forward (testing) passes.
+func (ly *Layer) noiseSD() float64 {
+	ap := &ly.Params.Act
+	if ap.TestNoise <= 0 || ly.Network == nil || ly.Network.buildingTrain || ly.Network.buildingTrainFwd {
+		return ap.Noise
+	}
+	return math.Sqrt(ap.Noise*ap.Noise + ap.TestNoise*ap.TestNoise)
 }
 
 // inputGraph returns the graph to use for building, based on the

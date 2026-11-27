@@ -22,6 +22,14 @@ type ActParams struct {
 	// in both training and testing. 0 = no noise.
 	Noise float64 `default:"0"`
 
+	// TestNoise is the standard deviation of additional Gaussian noise
+	// added to the net input on every cycle of the Forward (testing)
+	// passes only, as TestDropout is to Dropout: a network that learned
+	// to override its training Noise can be tested with more noise. It
+	// adds to Noise as independent noise, so the total standard deviation
+	// in testing is sqrt(Noise^2 + TestNoise^2). 0 = none.
+	TestNoise float64 `default:"0" min:"0"`
+
 	// Dropout is the probability of setting each unit's activity to zero,
 	// on each cycle of the training passes only (Backward), with the other
 	// activities scaled by 1 / (1 - Dropout) to keep the mean the same.

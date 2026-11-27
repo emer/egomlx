@@ -104,6 +104,15 @@ type Network struct {
 	// compiled computation graph. Created by [Build].
 	Exec *model.Exec `display:"-"`
 
+	// TrainFwdExec runs the forward pass of the training trials
+	// ([TrainTrial]), without the test-only perturbations
+	// ([ActParams.TestDropout] and [ActParams.TestNoise]), so that they
+	// do not affect training, including through the activity carried
+	// over to the next trial ([NetworkParams.Decay]). It is only created
+	// when some layer has test-only perturbations: otherwise [Exec] is
+	// used for the training trials too.
+	TrainFwdExec *model.Exec `display:"-"`
+
 	// TrainExec is the [gomlx] model executor for the training graph:
 	// forward pass + loss + backward gradients + optimizer weight
 	// updates, all in one compiled computation graph.
@@ -167,6 +176,11 @@ type Network struct {
 	// buildingTrain is true while building the training graph, which
 	// enables dropout ([ActParams.Dropout]).
 	buildingTrain bool
+
+	// buildingTrainFwd is true while building the forward graph of the
+	// training trials ([TrainFwdExec]), which disables the test-only
+	// perturbations.
+	buildingTrainFwd bool
 
 	// CompileTimer times the graph building and compilation ([Network.Build],
 	// [Network.UpdateParams]), separately from the computation.
@@ -493,6 +507,19 @@ func (nt *Network) buildGraph() error {
 		return fmt.Errorf("Network %s: buildGraph: %w", nt.Name, err)
 	}
 	nt.Exec = ex
+	nt.TrainFwdExec = nil
+	if nt.hasTestPerturb() {
+		trainFwdFn := func(scope *model.Scope, g *graph.Graph, inputs []*graph.Node) []*graph.Node {
+			nt.buildingTrainFwd = true
+			defer func() { nt.buildingTrainFwd = false }()
+			return nt.buildModelFn(scope, g, inputs)
+		}
+		tex, err := model.NewExec(nt.Backend, nt.Store, trainFwdFn)
+		if err != nil {
+			return fmt.Errorf("Network %s: buildGraph: train forward: %w", nt.Name, err)
+		}
+		nt.TrainFwdExec = tex
+	}
 	err = nt.buildTrainGraph()
 	if err != nil {
 		return err
@@ -519,8 +546,11 @@ func (nt *Network) preCompile() error {
 			carryShapes = append(carryShapes, shapes.Make(dtypes.Float32, nt.MaxData, ly.Shape.Len()))
 		}
 	}
-	if nt.Exec != nil {
-		if _, err := nt.Exec.Compile(append(slices.Clone(inShapes), carryShapes...)...); err != nil {
+	for _, ex := range []*model.Exec{nt.Exec, nt.TrainFwdExec} {
+		if ex == nil {
+			continue
+		}
+		if _, err := ex.Compile(append(slices.Clone(inShapes), carryShapes...)...); err != nil {
 			return fmt.Errorf("Network %s: preCompile: %w", nt.Name, err)
 		}
 	}
@@ -833,8 +863,28 @@ func (nt *Network) targArgs() ([]any, error) {
 // data items, computing all the activation values.
 // It reads back the activation values and all the weight values,
 // so that all network state is available for display and access.
+// It is a testing pass, with the test-only perturbations
+// ([ActParams.TestDropout] and [ActParams.TestNoise]): [TrainTrial]
+// runs its forward pass without them.
 func (nt *Network) Forward() error {
-	if nt.Exec == nil {
+	return nt.forward(nt.Exec)
+}
+
+// hasTestPerturb returns whether any layer has test-only perturbations
+// ([ActParams.TestDropout] or [ActParams.TestNoise]).
+func (nt *Network) hasTestPerturb() bool {
+	for _, ly := range nt.Layers {
+		if ly.Params.Act.TestDropout > 0 || ly.Params.Act.TestNoise > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// forward runs a forward pass with the given executor: [Exec], or
+// [TrainFwdExec] for the training trials.
+func (nt *Network) forward(ex *model.Exec) error {
+	if ex == nil {
 		return errors.New("Network: not built -- call Build first")
 	}
 	args, err := nt.inputArgs()
@@ -843,7 +893,7 @@ func (nt *Network) Forward() error {
 	}
 	args = append(args, nt.carryArgs()...)
 	nt.ForwardTimer.Start() // includes the readback of the results, which waits for the computation
-	outs, err := nt.Exec.Call(args...)
+	outs, err := ex.Call(args...)
 	if err != nil {
 		nt.ForwardTimer.Stop()
 		return errors.Log(fmt.Errorf("Network: Forward: %w", err))
@@ -1098,10 +1148,18 @@ func readScalar(tsr *tensors.Tensor) float32 {
 // TrainTrial runs one full training trial: a forward pass, followed by
 // a backward pass that computes the gradients and updates the weights
 // with the optimizer, for the current input and target data.
+// The forward pass has no test-only perturbations ([ActParams.TestDropout]
+// and [ActParams.TestNoise]), unlike [Forward], so that they do not
+// affect training, including through the activity carried over to the
+// next trial ([NetworkParams.Decay]).
 // The optional updtDWt controls the DWt readback during Backward:
 // see [Network.Backward].
 func (nt *Network) TrainTrial(updtDWt ...DWtTypes) error {
-	err := nt.Forward()
+	ex := nt.TrainFwdExec
+	if ex == nil {
+		ex = nt.Exec
+	}
+	err := nt.forward(ex)
 	if err != nil {
 		return err
 	}

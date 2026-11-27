@@ -47,6 +47,7 @@ func (lp *LayerParams) Defaults() {
 	lp.Act.Fn = ReLU
 	lp.Act.LeakySlope = 0.01
 	lp.Act.Noise = 0
+	lp.Act.TestNoise = 0
 	lp.Act.Dropout = 0
 	lp.Act.TestDropout = 0
 }

@@ -5,6 +5,7 @@
 package egomlx
 
 import (
+	"math"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -260,6 +261,103 @@ func TestTestDropout(t *testing.T) {
 	net.Backward()
 	if net.Loss != l0 {
 		t.Errorf("TestDropout changed the training pass: loss %g, without %g", net.Loss, l0)
+	}
+}
+
+// TestTestNoise checks that TestNoise gives a different output on each
+// Forward (testing) pass with the same input, and has no effect on the
+// training pass, unlike Noise.
+func TestTestNoise(t *testing.T) {
+	nData := 4
+	net := testRANet(t, "TestTestNoise", nData)
+	for _, ly := range net.Layers {
+		for _, pt := range ly.RecvPaths {
+			pt.Params.Learn = false
+		}
+	}
+	net.UpdateParams()
+	applyRandomBatch(t, net, rand.New(rand.NewPCG(5, 6)), nData)
+	net.Forward()
+	a := outActs(net)
+	net.Backward()
+	l0 := net.Loss
+	for _, ly := range net.Layers {
+		if ly.Type == Hidden {
+			ly.Params.Act.TestNoise = 1
+			if sd := ly.noiseSD(); sd != 1 {
+				t.Errorf("%s: test noise SD %g, want 1", ly.Name, sd)
+			}
+			ly.Params.Act.Noise = 0.75
+			if sd := ly.noiseSD(); math.Abs(sd-1.25) > 1e-12 {
+				t.Errorf("%s: test noise SD %g, want 1.25", ly.Name, sd)
+			}
+			ly.Params.Act.Noise = 0
+		}
+	}
+	net.UpdateParams()
+	net.Forward()
+	b := outActs(net)
+	net.Forward()
+	c := outActs(net)
+	if slices.Equal(a, b) || slices.Equal(b, c) {
+		t.Errorf("TestNoise did not change the Forward output on each pass")
+	}
+	net.Backward()
+	if net.Loss != l0 {
+		t.Errorf("TestNoise changed the training pass: loss %g, without %g", net.Loss, l0)
+	}
+}
+
+// TestTestPerturbTraining checks that the test-only perturbations
+// (TestNoise, TestDropout) do not affect training trials, with carryover
+// (Decay < 1), where the forward pass of each training trial sets the
+// activity carried over to the next one: the training losses must be the
+// same as without them, while a Forward (testing) pass is perturbed.
+func TestTestPerturbTraining(t *testing.T) {
+	nData := 2
+	train := func(testNoise, testDropout float64) ([]float32, *Network) {
+		net := testRecurrentNet(t, nData, 5, 0)
+		net.Params.Decay = 0.5
+		net.Params.Optim = Adam
+		net.Params.LRate = 0.01
+		net.Params.Loss = BCE
+		for _, ly := range net.Layers {
+			if ly.Type == Hidden {
+				ly.Params.Act.TestNoise = testNoise
+				ly.Params.Act.TestDropout = testDropout
+			}
+		}
+		net.UpdateParams()
+		if (net.TrainFwdExec != nil) != (testNoise > 0 || testDropout > 0) {
+			t.Errorf("TrainFwdExec %v with TestNoise %g, TestDropout %g", net.TrainFwdExec != nil, testNoise, testDropout)
+		}
+		rnd := rand.New(rand.NewPCG(5, 6))
+		var losses []float32
+		for range 10 {
+			applyRandomBatch(t, net, rnd, nData)
+			if err := net.TrainTrial(); err != nil {
+				t.Fatal(err)
+			}
+			losses = append(losses, net.Loss)
+		}
+		return losses, net
+	}
+	l0, _ := train(0, 0)
+	for _, p := range [][2]float64{{2, 0}, {0, 0.5}} {
+		l, net := train(p[0], p[1])
+		if !slices.Equal(l, l0) {
+			t.Errorf("TestNoise %g, TestDropout %g changed training: losses %v, without %v", p[0], p[1], l, l0)
+		}
+		net.InitActs()
+		net.ApplyExts()
+		net.Forward()
+		b := outActs(net)
+		net.InitActs()
+		net.ApplyExts()
+		net.Forward()
+		if slices.Equal(b, outActs(net)) {
+			t.Errorf("TestNoise %g, TestDropout %g did not perturb the Forward pass", p[0], p[1])
+		}
 	}
 }
 
